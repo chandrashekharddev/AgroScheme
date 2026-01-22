@@ -1,14 +1,11 @@
-# Updated requirements.txt for Render
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 sqlalchemy==2.0.23
 python-multipart==0.0.6
 python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4  # Keep bcrypt, it's fine!
+passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0
 pydantic==2.5.0
 email-validator==2.1.0
-
-# Add these for stability:
-anyio==4.3.0
-typing-extensions==4.9.0
+# anyio==4.3.0  # <- This line causes the conflict. Remove it.
+anyio>=3.7.1, <4.0.0  # <- Use this line or remove 'anyio' entirely.
