@@ -1,4 +1,4 @@
-# app/config.py
+# app/config.py - UPDATED FOR RENDER
 import os
 from dotenv import load_dotenv
 
@@ -8,8 +8,12 @@ class Settings:
     PROJECT_NAME = "AgroScheme AI"
     PROJECT_VERSION = "1.0.0"
     
-    # ✅ CHANGE FROM aiosqlite to sqlite
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./agroscheme.db")  # REMOVE "aiosqlite"
+    # ✅ RENDER FIX: Handle both SQLite and PostgreSQL
+    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./agroscheme.db")
+    
+    # Fix for Render's PostgreSQL URL (postgres:// → postgresql://)
+    if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
     
     # JWT
     SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
@@ -24,12 +28,15 @@ class Settings:
     ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
     UPLOAD_DIR = "uploads"
     
-    # CORS
+    # CORS - Add your Render URL here after deployment
     ALLOWED_ORIGINS = [
         "http://localhost:5500",
         "http://127.0.0.1:5500",
         "http://localhost:8000",
         "http://localhost:3000",
+        # Add after deployment:
+        # "https://agroscheme-backend.onrender.com",
+        # "https://your-frontend.onrender.com",
     ]
 
 settings = Settings()

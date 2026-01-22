@@ -1,14 +1,15 @@
+# app/routers/schemes.py - CORRECTED VERSION
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 
-# ✅ Use relative imports
-from database import get_db
-from schemas import SchemeResponse, EligibilityCheck, ApplicationResponse
-from crud import (
+# ✅ CORRECT IMPORTS - ADD "app." prefix
+from app.database import get_db
+from app.schemas import SchemeResponse, EligibilityCheck, ApplicationResponse
+from app.crud import (
     get_all_schemes, get_scheme_by_id, check_user_eligibility, create_application
 )
-from .farmers import get_current_user  # ✅ Note: single dot for same directory
+from app.routers.farmers import get_current_user  # ✅ Fixed import path
 
 router = APIRouter(prefix="/schemes", tags=["schemes"])
 

@@ -1,3 +1,4 @@
+# app/routers/farmers.py - CORRECTED VERSION
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List
@@ -7,16 +8,17 @@ import uuid
 from pathlib import Path
 
 
-from database import get_db
-from schemas import UserResponse, UserUpdate, DocumentResponse, NotificationResponse, ApplicationResponse, DocumentCreate
-from crud import (
+# ✅ CORRECT IMPORTS - ADD "app." prefix
+from app.database import get_db
+from app.schemas import UserResponse, UserUpdate, DocumentResponse, NotificationResponse, ApplicationResponse, DocumentCreate
+from app.crud import (
     get_user_by_id, update_user, get_user_documents, create_document, 
     get_user_notifications, mark_notification_as_read, get_user_applications,
     update_document_verification
 )
-from utils.security import verify_token
-from ai_processor import document_processor
-from config import settings
+from app.utils.security import verify_token
+from app.ai_processor import document_processor
+from app.config import settings
 
 router = APIRouter(prefix="/farmers", tags=["farmers"])
 
@@ -156,10 +158,12 @@ async def get_my_applications(
     result = []
     for app in applications:
         app_dict = app.__dict__
-        from ..crud import get_scheme_by_id
+        # ✅ FIXED: Add app. prefix
+        from app.crud import get_scheme_by_id
         scheme = get_scheme_by_id(db, app.scheme_id)
         if scheme:
-            from ..schemas import SchemeResponse
+            # ✅ FIXED: Add app. prefix
+            from app.schemas import SchemeResponse
             app_dict["scheme"] = SchemeResponse.from_orm(scheme)
         result.append(app_dict)
     
@@ -174,7 +178,8 @@ async def get_dashboard_stats(
     total_applied = len(applications)
     approved_applications = [app for app in applications if app.status == "approved"]
     total_benefits = sum([app.approved_amount or 0 for app in approved_applications])
-    from ..crud import get_all_schemes
+    # ✅ FIXED: Add app. prefix
+    from app.crud import get_all_schemes
     all_schemes = get_all_schemes(db, active_only=True)
     eligible_count = min(len(all_schemes), 12)
     documents = get_user_documents(db, current_user.id)

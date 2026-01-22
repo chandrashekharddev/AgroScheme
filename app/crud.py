@@ -4,10 +4,10 @@ from typing import List, Optional, Dict, Any
 import random
 import string
 from datetime import datetime
-from models import User, Document, GovernmentScheme, Application, Notification  # ✅ NEW
-from schemas import UserCreate, UserUpdate, SchemeCreate, DocumentCreate  # ✅ NEW
-from utils.security import get_password_hash, verify_password  # ✅ NEW
-from utils.helpers import generate_farmer_id, generate_application_id, calculate_eligibility  # ✅ NEW
+from app.models import User, Document, GovernmentScheme, Application, Notification  # ✅ NEW
+from app.schemas import UserCreate, UserUpdate, SchemeCreate, DocumentCreate  # ✅ NEW
+from app.utils.security import get_password_hash, verify_password  # ✅ NEW
+from app.utils.helpers import generate_farmer_id, generate_application_id, calculate_eligibility  # ✅ NEW
 
 def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
     return db.query(User).filter(User.id == user_id).first()

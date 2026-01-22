@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-from config import settings
+from app.config import settings
 
 # ✅ Use SHA256 instead of bcrypt to avoid the 72-byte limit issue
 pwd_context = CryptContext(schemes=["sha256_crypt"], deprecated="auto")

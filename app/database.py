@@ -1,29 +1,36 @@
-# app/database.py - SIMPLIFIED VERSION
+# app/database.py
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-import os
 
-from config import settings
+# ✅ Fix import: use app.config
+from app.config import settings
 
-# ✅ Use regular sqlite, not aiosqlite
-DATABASE_URL = settings.DATABASE_URL.replace("aiosqlite", "sqlite") if "aiosqlite" in settings.DATABASE_URL else settings.DATABASE_URL
+# Handle PostgreSQL URL format for Render
+DATABASE_URL = settings.DATABASE_URL
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Create uploads directory
-os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+# Check if using SQLite
+is_sqlite = "sqlite" in DATABASE_URL
 
-# ✅ Create engine WITHOUT async
+# Create engine with appropriate arguments
+connect_args = {}
+if is_sqlite:
+    connect_args = {"check_same_thread": False}
+    # Create uploads directory
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False}  # Only for SQLite
+    connect_args=connect_args,
+    pool_pre_ping=True if not is_sqlite else False,
 )
 
-# ✅ Create session
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 Base = declarative_base()
 
-# ✅ Dependency for database sessions
 def get_db():
     db = SessionLocal()
     try:

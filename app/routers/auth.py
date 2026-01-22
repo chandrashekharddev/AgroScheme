@@ -1,14 +1,14 @@
-# app/routers/auth.py - FIXED VERSION
+# app/routers/auth.py - CORRECTED VERSION
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import timedelta
 
-# ✅ CORRECT IMPORTS - no dots
-from database import get_db
-from schemas import UserCreate, UserResponse, Token, UserLogin
-from crud import create_user, authenticate_user, get_user_by_mobile, get_user_by_email
-from utils.security import create_access_token
-from config import settings
+# ✅ CORRECT IMPORTS - ADD "app." prefix
+from app.database import get_db
+from app.schemas import UserCreate, UserResponse, Token, UserLogin
+from app.crud import create_user, authenticate_user, get_user_by_mobile, get_user_by_email
+from app.utils.security import create_access_token
+from app.config import settings
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -24,7 +24,6 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
     
     # Check email if provided
     if user.email:
-        # ✅ CORRECT - already imported above
         db_user_email = get_user_by_email(db, email=user.email)
         if db_user_email:
             raise HTTPException(

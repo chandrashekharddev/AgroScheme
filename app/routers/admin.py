@@ -1,15 +1,16 @@
+# app/routers/admin.py - CORRECTED VERSION
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-# ✅ Use relative imports
-from database import get_db
-from schemas import SchemeCreate, SchemeResponse, AdminStats, UserResponse
-from crud import (
+# ✅ CORRECT IMPORTS - ADD "app." prefix
+from app.database import get_db
+from app.schemas import SchemeCreate, SchemeResponse, AdminStats, UserResponse
+from app.crud import (
     create_scheme, get_all_schemes,
     get_admin_stats, get_user_by_id, get_user_applications, update_application_status
 )
-from .farmers import get_current_user  # ✅ Note: single dot for same directory
+from app.routers.farmers import get_current_user  # ✅ Fixed import path
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -43,7 +44,8 @@ async def get_all_users(
     admin_user = Depends(verify_admin),
     db: Session = Depends(get_db)
 ):
-    from ..crud import get_all_farmers
+    # ✅ FIXED: Add app. prefix
+    from app.crud import get_all_farmers
     return get_all_farmers(db, skip, limit)
 
 @router.get("/users/{user_id}/applications")
@@ -56,10 +58,12 @@ async def get_user_applications_admin(
     result = []
     for app in applications:
         app_dict = app.__dict__
-        from ..crud import get_scheme_by_id
+        # ✅ FIXED: Add app. prefix
+        from app.crud import get_scheme_by_id
         scheme = get_scheme_by_id(db, app.scheme_id)
         if scheme:
-            from ..schemas import SchemeResponse
+            # ✅ FIXED: Add app. prefix
+            from app.schemas import SchemeResponse
             app_dict["scheme"] = SchemeResponse.from_orm(scheme)
         
         user = get_user_by_id(db, app.user_id)
