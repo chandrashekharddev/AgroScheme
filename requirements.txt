@@ -7,6 +7,6 @@ passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0
 pydantic==2.5.0
 email-validator==2.1.0
-# anyio==4.3.0  # <- This line causes the conflict. Remove it.
-anyio>=3.7.1, <4.0.0  # <- Use this line or remove 'anyio' entirely.
+anyio>=3.7.1, <4.0.0
 psycopg2-binary==2.9.9
+Pillow==10.3.0  # ← ADD THIS LINE
