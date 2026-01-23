@@ -5,7 +5,7 @@ from typing import List
 
 # ✅ CORRECT IMPORTS - ADD "app." prefix
 from app.database import get_db
-from app.schemas import SchemeResponse, EligibilityCheck, ApplicationResponse
+from ..schemas import SchemeResponse, EligibilityCheck, ApplicationResponse
 from app.crud import (
     get_all_schemes, get_scheme_by_id, check_user_eligibility, create_application
 )
