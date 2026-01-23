@@ -5,7 +5,7 @@ from typing import List
 
 # ✅ CORRECT IMPORTS - ADD "app." prefix
 from app.database import get_db
-from app.schemas import DocumentResponse
+from ..schemas import DocumentResponse
 from app.crud import get_user_documents
 from app.routers.farmers import get_current_user  # ✅ Fixed import path
 
