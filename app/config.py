@@ -40,6 +40,9 @@ class Settings:
         
         # ✅ YOUR VERCEL FRONTEND
         "https://agroscheme-backend-1.vercel.app",
+        "https://agroscheme-backend-2.vercel.app",
+        "https://agroscheme-backend-3.vercel.app",
+        "https://agroscheme-backend-4.vercel.app",
         "https://agroscheme-backend.vercel.app",
         "https://agroscheme-ai.vercel.app",
         "https://agroscheme.vercel.app",
