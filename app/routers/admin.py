@@ -5,7 +5,7 @@ from typing import List, Optional
 
 # ✅ CORRECT IMPORTS - ADD "app." prefix
 from app.database import get_db
-from ..schemas import SchemeCreate, SchemeResponse, AdminStats, UserResponse
+from app.schemas import SchemeCreate, SchemeResponse, AdminStats, UserResponse
 from app.crud import (
     create_scheme, get_all_schemes,
     get_admin_stats, get_user_by_id, get_user_applications, update_application_status
