@@ -14,7 +14,7 @@ from app.schemas import UserResponse, UserUpdate, DocumentResponse, Notification
 from app.crud import (
     get_user_by_id, update_user, get_user_documents, create_document, 
     get_user_notifications, mark_notification_as_read, get_user_applications,
-    update_document_verification
+    update_document_verification, get_all_schemes  # ← Add this here
 )
 from app.utils.security import verify_token
 from app.ai_processor import document_processor
