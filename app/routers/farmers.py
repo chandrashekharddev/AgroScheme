@@ -1,39 +1,46 @@
-# app/routers/farmers.py - CORRECTED VERSION
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import os
 import shutil
 import uuid
 from pathlib import Path
 
-
-# ✅ CORRECT IMPORTS - ADD "app." prefix
 from app.database import get_db
 from app.schemas import UserResponse, UserUpdate, DocumentResponse, NotificationResponse, ApplicationResponse, DocumentCreate
 from app.crud import (
     get_user_by_id, update_user, get_user_documents, create_document, 
     get_user_notifications, mark_notification_as_read, get_user_applications,
-    update_document_verification, get_all_schemes  # ← Add this here
+    update_document_verification, get_all_schemes
 )
 from app.utils.security import verify_token
 from app.ai_processor import document_processor
 from app.config import settings
 
 router = APIRouter(prefix="/farmers", tags=["farmers"])
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
-def get_current_user(token: dict = Depends(verify_token), db: Session = Depends(get_db)):
-    if token is None:  # ✅ Check for None, not empty string
+def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    print(f"DEBUG: Token received: {token[:20]}..." if token else "DEBUG: No token")
+    
+    # Verify the token
+    payload = verify_token(token)
+    
+    if payload is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated"
+            detail="Invalid or expired token"
         )
     
-    user_id = token.get("sub")
+    user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
+            detail="Invalid token payload"
         )
     
     user = get_user_by_id(db, int(user_id))
