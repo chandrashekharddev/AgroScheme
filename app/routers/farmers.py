@@ -171,17 +171,19 @@ async def get_my_applications(
 
 @router.get("/dashboard-stats")
 async def get_dashboard_stats(
-    current_user: UserResponse = Depends(get_current_user),
+    current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     applications = get_user_applications(db, current_user.id)
     total_applied = len(applications)
     approved_applications = [app for app in applications if app.status == "approved"]
     total_benefits = sum([app.approved_amount or 0 for app in approved_applications])
+    
     # ✅ FIXED: Add app. prefix
     from app.crud import get_all_schemes
     all_schemes = get_all_schemes(db, active_only=True)
     eligible_count = min(len(all_schemes), 12)
+    
     documents = get_user_documents(db, current_user.id)
     pending_docs = [doc for doc in documents if not doc.verified]
     
