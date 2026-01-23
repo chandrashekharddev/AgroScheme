@@ -22,8 +22,8 @@ from app.config import settings
 
 router = APIRouter(prefix="/farmers", tags=["farmers"])
 
-def get_current_user(token: str = Depends(verify_token), db: Session = Depends(get_db)):
-    if not token:
+def get_current_user(token: dict = Depends(verify_token), db: Session = Depends(get_db)):
+    if token is None:  # ✅ Check for None, not empty string
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated"
