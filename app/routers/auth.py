@@ -5,7 +5,7 @@ from datetime import timedelta
 
 # ✅ CORRECT IMPORTS - ADD "app." prefix
 from app.database import get_db
-from app.schemas import UserCreate, UserResponse, Token, UserLogin
+from ..schemas import UserCreate, UserResponse, Token, UserLogin
 from app.crud import create_user, authenticate_user, get_user_by_mobile, get_user_by_email
 from app.utils.security import create_access_token
 from app.config import settings
