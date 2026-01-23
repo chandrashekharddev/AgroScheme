@@ -1,4 +1,4 @@
-# app/main.py
+# app/main.py - ADD DEBUG LOGGING
 import os
 from pathlib import Path
 
@@ -6,12 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-# ✅ All imports should start with app.
+# Imports
 from app.database import engine, Base
 from app.config import settings
 from app.routers import auth, farmers, schemes, documents, admin
 
-# ✅ Create tables
+# Create tables
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -20,15 +20,16 @@ app = FastAPI(
     description="AgroScheme AI - AI-powered platform for farmers"
 )
 
-# CORS
-allowed_origins = settings.ALLOWED_ORIGINS.copy()
-RENDER_URL = os.getenv("RENDER_EXTERNAL_URL", "")
-if RENDER_URL:
-    allowed_origins.append(RENDER_URL)
+# ✅ PRINT CORS INFO FOR DEBUGGING
+print("=" * 50)
+print("CORS Configuration:")
+print(f"Allowed Origins: {settings.ALLOWED_ORIGINS}")
+print(f"Request Origin (from env): {os.getenv('REQUEST_ORIGIN', 'Not set')}")
+print("=" * 50)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,7 +56,9 @@ async def root():
         "message": "AgroScheme AI API",
         "version": settings.PROJECT_VERSION,
         "docs": "/docs",
-        "health": "/health"
+        "health": "/health",
+        "cors_enabled": True,
+        "allowed_origins": settings.ALLOWED_ORIGINS[:3]  # Show first 3 for brevity
     }
 
 @app.get("/health")
@@ -65,3 +68,17 @@ async def health_check():
 @app.get("/test")
 async def test():
     return {"message": "API working"}
+
+# ✅ Add a CORS test endpoint
+@app.get("/cors-test")
+async def cors_test():
+    return {
+        "message": "CORS test successful",
+        "allowed_origins": settings.ALLOWED_ORIGINS,
+        "timestamp": "now"
+    }
+
+# ✅ Handle OPTIONS requests for all endpoints
+@app.options("/{path:path}")
+async def options_handler():
+    return {"message": "CORS preflight OK"}

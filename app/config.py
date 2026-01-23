@@ -1,4 +1,4 @@
-# app/config.py - UPDATED FOR RENDER
+# app/config.py - UPDATED FOR RENDER & VERCEL
 import os
 from dotenv import load_dotenv
 
@@ -28,15 +28,27 @@ class Settings:
     ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
     UPLOAD_DIR = "uploads"
     
-    # CORS - Add your Render URL here after deployment
+    # ✅ UPDATED CORS - ADD YOUR VERCEL FRONTEND HERE
     ALLOWED_ORIGINS = [
+        # Local development
         "http://localhost:5500",
         "http://127.0.0.1:5500",
         "http://localhost:8000",
         "http://localhost:3000",
-        # Add after deployment:
-        # "https://agroscheme-backend.onrender.com",
-        # "https://your-frontend.onrender.com",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        
+        # ✅ YOUR VERCEL FRONTEND
+        "https://agroscheme-backend-1.vercel.app",
+        "https://agroscheme-backend.vercel.app",
+        "https://agroscheme-ai.vercel.app",
+        "https://agroscheme.vercel.app",
+        
+        # Render backend (if you want to allow API-to-API calls)
+        "https://agroscheme-6.onrender.com",
+        
+        # Wildcards for Vercel preview deployments
+        "https://*.vercel.app",
     ]
 
 settings = Settings()
