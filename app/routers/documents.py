@@ -16,4 +16,11 @@ async def get_all_documents(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    return get_user_documents(db, current_user.id)
+    documents = get_user_documents(db, current_user.id)
+    
+    # Add file_url to each document
+    for doc in documents:
+        if doc.file_path:
+            doc.file_url = f"/uploads/{doc.file_path}"
+    
+    return documentsid)
