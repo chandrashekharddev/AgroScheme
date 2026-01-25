@@ -1,15 +1,13 @@
-# app/routers/schemes.py - CORRECTED VERSION
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
 
-# ✅ CORRECT IMPORTS - ADD "app." prefix
 from app.database import get_db
 from app.schemas import SchemeResponse, EligibilityCheck, ApplicationResponse
 from app.crud import (
     get_all_schemes, get_scheme_by_id, check_user_eligibility, create_application
 )
-from app.routers.farmers import get_current_user  # ✅ Fixed import path
+from app.dependencies import get_current_user
 
 router = APIRouter(prefix="/schemes", tags=["schemes"])
 
@@ -46,13 +44,16 @@ async def apply_for_scheme(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    # Check eligibility
     eligibility = check_user_eligibility(db, current_user.id, scheme_id)
+    
     if not eligibility.get("eligible", False):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Not eligible for this scheme."
+            detail=f"Not eligible for this scheme: {eligibility.get('message', 'Unknown reason')}"
         )
     
+    # Check for missing documents
     missing_docs = eligibility.get("missing_documents", [])
     if missing_docs:
         raise HTTPException(
@@ -60,6 +61,7 @@ async def apply_for_scheme(
             detail=f"Missing required documents: {', '.join(missing_docs)}"
         )
     
+    # Create application
     application = create_application(
         db=db,
         user_id=current_user.id,
