@@ -35,6 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 # Uploads directory (for SQLite only)
 if "sqlite" in settings.DATABASE_URL:
     uploads_dir = Path(settings.UPLOAD_DIR)
