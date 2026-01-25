@@ -11,6 +11,7 @@ from app.database import engine, Base
 from app.config import settings
 from app.routers import auth, farmers, schemes, documents, admin
 
+os.makedirs("uploads", exist_ok=True)
 # Create tables
 Base.metadata.create_all(bind=engine)
 
