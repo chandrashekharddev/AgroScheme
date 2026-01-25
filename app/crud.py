@@ -1,14 +1,13 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional, Dict, Any
-import random
-import string
 from datetime import datetime
-from app.models import User, Document, GovernmentScheme, Application, Notification  # ✅ NEW
-from app.schemas import UserCreate, UserUpdate, SchemeCreate, DocumentCreate  # ✅ NEW
-from app.utils.security import get_password_hash, verify_password  # ✅ NEW
-from app.utils.helpers import generate_farmer_id, generate_application_id, calculate_eligibility  # ✅ NEW
+from app.models import User, Document, GovernmentScheme, Application, Notification
+from app.schemas import UserCreate, UserUpdate, SchemeCreate, DocumentCreate
+from app.utils.security import get_password_hash, verify_password
+from app.utils.helpers import generate_farmer_id, generate_application_id, calculate_eligibility
 
+# User CRUD functions
 def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
     return db.query(User).filter(User.id == user_id).first()
 
@@ -46,6 +45,7 @@ def create_user(db: Session, user: UserCreate) -> User:
     db.commit()
     db.refresh(db_user)
     
+    # Create welcome notification
     notification = Notification(
         user_id=db_user.id,
         title="Welcome to AgroScheme AI!",
@@ -78,6 +78,12 @@ def authenticate_user(db: Session, mobile_number: str, password: str) -> Optiona
         return None
     return user
 
+# ✅ ADD THIS MISSING FUNCTION
+def get_all_farmers(db: Session, skip: int = 0, limit: int = 100) -> List[User]:
+    """Get all farmers (users with role 'farmer')"""
+    return db.query(User).filter(User.role == "farmer").offset(skip).limit(limit).all()
+
+# Document CRUD functions
 def create_document(db: Session, document: DocumentCreate, user_id: int, file_path: str, file_name: str, file_size: int) -> Document:
     db_document = Document(
         user_id=user_id,
@@ -112,6 +118,7 @@ def update_document_verification(db: Session, document_id: int, verified: bool, 
     db.refresh(document)
     return document
 
+# Scheme CRUD functions
 def create_scheme(db: Session, scheme: SchemeCreate, created_by: str) -> GovernmentScheme:
     db_scheme = GovernmentScheme(
         scheme_name=scheme.scheme_name,
@@ -143,6 +150,7 @@ def get_all_schemes(db: Session, skip: int = 0, limit: int = 100, active_only: b
         query = query.filter(GovernmentScheme.is_active == True)
     return query.offset(skip).limit(limit).all()
 
+# Application CRUD functions
 def create_application(db: Session, user_id: int, scheme_id: int, application_data: Dict[str, Any]) -> Application:
     scheme = get_scheme_by_id(db, scheme_id)
     if not scheme:
@@ -159,10 +167,10 @@ def create_application(db: Session, user_id: int, scheme_id: int, application_da
             "state": user.state,
             "district": user.district,
             "village": user.village,
-            "total_land_acres": user.total_land_acres,
-            "annual_income": user.annual_income,
-            "bank_account": user.bank_account_number,
-            "ifsc_code": user.ifsc_code
+            "total_land_acres": user.total_land_acres or 0,
+            "annual_income": user.annual_income or 0,
+            "bank_account": user.bank_account_number or "",
+            "ifsc_code": user.ifsc_code or ""
         },
         "scheme_info": {
             "scheme_name": scheme.scheme_name,
@@ -199,6 +207,19 @@ def create_application(db: Session, user_id: int, scheme_id: int, application_da
 
 def get_user_applications(db: Session, user_id: int) -> List[Application]:
     return db.query(Application).filter(Application.user_id == user_id).all()
+
+# ✅ ADD THIS FUNCTION IF MISSING
+def get_all_applications(db: Session, skip: int = 0, limit: int = 100, status: Optional[str] = None) -> List[Application]:
+    """Get all applications with optional status filter"""
+    query = db.query(Application)
+    
+    if status:
+        valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed"]
+        if status not in valid_statuses:
+            raise ValueError(f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
+        query = query.filter(Application.status == status)
+    
+    return query.offset(skip).limit(limit).all()
 
 def get_application_by_id(db: Session, application_id: int) -> Optional[Application]:
     return db.query(Application).filter(Application.id == application_id).first()
@@ -245,8 +266,8 @@ def check_user_eligibility(db: Session, user_id: int, scheme_id: int) -> Dict[st
     user_data = {
         "state": user.state,
         "district": user.district,
-        "total_land_acres": user.total_land_acres,
-        "annual_income": user.annual_income,
+        "total_land_acres": user.total_land_acres or 0,
+        "annual_income": user.annual_income or 0,
         "land_type": user.land_type,
         "main_crops": user.main_crops
     }
@@ -254,7 +275,7 @@ def check_user_eligibility(db: Session, user_id: int, scheme_id: int) -> Dict[st
     eligibility_result = calculate_eligibility(user_data, scheme.eligibility_criteria)
     
     user_documents = get_user_documents(db, user_id)
-    user_doc_types = [doc.document_type.value for doc in user_documents if doc.verified]
+    user_doc_types = [doc.document_type for doc in user_documents if doc.verified]
     missing_docs = []
     
     for required_doc in scheme.required_documents:
@@ -265,6 +286,7 @@ def check_user_eligibility(db: Session, user_id: int, scheme_id: int) -> Dict[st
     
     return eligibility_result
 
+# Notification CRUD functions
 def create_notification(db: Session, user_id: int, title: str, message: str, notification_type: str, 
                        related_scheme_id: int = None, related_application_id: int = None) -> Notification:
     notification = Notification(
