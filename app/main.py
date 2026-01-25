@@ -18,7 +18,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.PROJECT_VERSION,
-    description="AgroScheme AI - AI-powered platform for farmers"
+    description="AI-powered platform for farmers"
 )
 
 # ✅ PRINT CORS INFO FOR DEBUGGING
@@ -36,14 +36,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ✅ FIXED: Create uploads directory properly
+uploads_dir = Path("uploads")
+uploads_dir.mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-# Uploads directory (for SQLite only)
-if "sqlite" in settings.DATABASE_URL:
-    uploads_dir = Path(settings.UPLOAD_DIR)
-    uploads_dir.mkdir(exist_ok=True)
-    app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
-else:
-    print("⚠️ PostgreSQL: uploads/ not mounted")
 
 # Include routers
 app.include_router(auth.router, tags=["Authentication"])
@@ -60,7 +56,7 @@ async def root():
         "docs": "/docs",
         "health": "/health",
         "cors_enabled": True,
-        "allowed_origins": settings.ALLOWED_ORIGINS[:3]  # Show first 3 for brevity
+        "allowed_origins": settings.ALLOWED_ORIGINS[:3]
     }
 
 @app.get("/health")
@@ -71,7 +67,6 @@ async def health_check():
 async def test():
     return {"message": "API working"}
 
-# ✅ Add a CORS test endpoint
 @app.get("/cors-test")
 async def cors_test():
     return {
@@ -80,7 +75,6 @@ async def cors_test():
         "timestamp": "now"
     }
 
-# ✅ Handle OPTIONS requests for all endpoints
 @app.options("/{path:path}")
 async def options_handler():
     return {"message": "CORS preflight OK"}
