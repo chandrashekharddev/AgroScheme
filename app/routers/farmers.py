@@ -120,7 +120,7 @@ async def upload_document(
             )
         
         # ✅ FIXED: Generate correct file URL
-        file_url = f"{settings.API_BASE_URL}/uploads/{relative_path}"
+        file_url = settings.get_file_url(relative_path)
         
         return {
             "success": True,
@@ -152,7 +152,7 @@ async def get_my_documents(
     for doc in documents:
         if doc.file_path:
             # Use API base URL from settings
-            doc.file_url = f"{settings.API_BASE_URL}/uploads/{doc.file_path}"
+            doc.file_url = settings.get_file_url(doc.file_path)
     
     return documents
 
