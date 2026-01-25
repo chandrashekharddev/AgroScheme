@@ -107,6 +107,8 @@ class DocumentResponse(DocumentBase):
     user_id: int
     file_name: str
     file_size: int
+    file_path: Optional[str] = None
+    file_url: Optional[str] = None  # Add this
     extracted_data: Optional[Dict[str, Any]] = None
     verified: bool
     uploaded_at: datetime
