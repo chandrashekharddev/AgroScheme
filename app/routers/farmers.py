@@ -21,6 +21,35 @@ from app.config import settings
 router = APIRouter(prefix="/farmers", tags=["farmers"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
+# Add to farmers.py
+@router.get("/debug-uploads")
+async def debug_uploads(
+    current_user: UserResponse = Depends(get_current_user)
+):
+    import os
+    
+    user_upload_dir = Path(settings.UPLOAD_DIR) / str(current_user.id)
+    
+    if not user_upload_dir.exists():
+        return {"message": "Upload directory does not exist", "path": str(user_upload_dir)}
+    
+    files = []
+    for file in user_upload_dir.iterdir():
+        if file.is_file():
+            files.append({
+                "name": file.name,
+                "size": file.stat().st_size,
+                "path": str(file),
+                "relative_path": f"{current_user.id}/{file.name}"
+            })
+    
+    return {
+        "user_id": current_user.id,
+        "upload_dir": str(user_upload_dir),
+        "exists": user_upload_dir.exists(),
+        "files": files,
+        "total_files": len(files)
+    }
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db)
