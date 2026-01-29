@@ -1,4 +1,4 @@
-# app/config.py - UPDATED FOR RENDER & VERCEL
+# app/config.py - FIXED VERSION (no backslash in f-strings)
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -83,7 +83,9 @@ class Settings:
         # Determine folder name
         if farmer_id:
             # Use farmer_id, sanitize for filesystem
-            folder_name = "farmer_" + farmer_id.replace('/', '_').replace('\\', '_')
+            # FIXED: No backslash in f-string
+            sanitized_farmer_id = farmer_id.replace('/', '_').replace('\\', '_')
+            folder_name = "farmer_" + sanitized_farmer_id
         else:
             folder_name = f"user_{user_id}"
         
@@ -100,7 +102,9 @@ class Settings:
     def get_user_folder_name(self, user_id: int, farmer_id: str = None) -> str:
         """Get folder name for user (without full path)"""
         if farmer_id:
-            return f"farmer_{farmer_id.replace('/', '_').replace('\\', '_')}"
+            # FIXED: No backslash in f-string
+            sanitized_farmer_id = farmer_id.replace('/', '_').replace('\\', '_')
+            return "farmer_" + sanitized_farmer_id
         return f"user_{user_id}"
     
     def get_relative_path(self, filename: str, user_id: int, farmer_id: str = None) -> str:
