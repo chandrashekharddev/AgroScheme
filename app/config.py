@@ -1,6 +1,7 @@
 # app/config.py - UPDATED FOR RENDER & VERCEL
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
 
@@ -57,22 +58,118 @@ class Settings:
         # Default to localhost for development
         return "http://localhost:8000"
     
-    # ✅ FILE URL HELPER METHOD (add this method)
+    # ==================== USER-SPECIFIC UPLOAD DIRECTORIES ====================
+    
+    @property
+    def UPLOAD_ROOT(self) -> Path:
+        """Get absolute path to uploads root directory"""
+        return Path.cwd() / self.UPLOAD_DIR
+    
+    def get_user_upload_dir(self, user_id: int, farmer_id: str = None) -> Path:
+        """
+        Get user-specific upload directory.
+        Creates directory if it doesn't exist.
+        
+        Args:
+            user_id: Database user ID
+            farmer_id: Farmer ID (preferred for folder name)
+        
+        Returns:
+            Path object to user's upload directory
+        """
+        # Ensure uploads root exists
+        self.UPLOAD_ROOT.mkdir(exist_ok=True)
+        
+        # Determine folder name
+        if farmer_id:
+            # Use farmer_id, sanitize for filesystem
+            folder_name = f"farmer_{farmer_id.replace('/', '_').replace('\\', '_')}"
+        else:
+            folder_name = f"user_{user_id}"
+        
+        user_dir = self.UPLOAD_ROOT / folder_name
+        user_dir.mkdir(exist_ok=True)
+        
+        # Create .gitkeep to maintain folder structure
+        gitkeep = user_dir / ".gitkeep"
+        if not gitkeep.exists():
+            gitkeep.touch()
+        
+        return user_dir
+    
+    def get_user_folder_name(self, user_id: int, farmer_id: str = None) -> str:
+        """Get folder name for user (without full path)"""
+        if farmer_id:
+            return f"farmer_{farmer_id.replace('/', '_').replace('\\', '_')}"
+        return f"user_{user_id}"
+    
+    def get_relative_path(self, filename: str, user_id: int, farmer_id: str = None) -> str:
+        """Generate relative path for database storage"""
+        folder_name = self.get_user_folder_name(user_id, farmer_id)
+        return f"{folder_name}/{filename}"
+    
+    def get_absolute_path(self, relative_path: str) -> Path:
+        """Convert relative path to absolute path"""
+        if not relative_path:
+            return None
+        
+        # Handle already absolute paths
+        if os.path.isabs(relative_path):
+            return Path(relative_path)
+        
+        return self.UPLOAD_ROOT / relative_path
+    
+    # ✅ FILE URL HELPER METHOD (UPDATED)
     def get_file_url(self, file_path: str) -> str:
         """Generate full URL for a file"""
         if not file_path:
             return ""
         
+        # If it's already a full URL, return as-is
+        if file_path.startswith(('http://', 'https://')):
+            return file_path
+        
         # Remove leading slash if present
         if file_path.startswith('/'):
             file_path = file_path[1:]
         
-        # If it's already a full URL, return as-is
-        if file_path.startswith('http'):
-            return file_path
-        
-        # Otherwise, construct URL
+        # Construct URL with uploads prefix
         return f"{self.API_BASE_URL}/uploads/{file_path}"
+    
+    def sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename to remove dangerous characters"""
+        # Keep only safe characters
+        safe_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        safe_name = ''.join(c for c in filename if c in safe_chars)
+        
+        # If empty after sanitization, use default
+        if not safe_name:
+            safe_name = "document"
+            
+        return safe_name
+    
+    # ✅ DEBUG METHOD: List all user uploads
+    def list_user_uploads(self, user_id: int = None, farmer_id: str = None):
+        """List files in user's upload directory (for debugging)"""
+        user_dir = self.get_user_upload_dir(
+            user_id=user_id if user_id else 0,
+            farmer_id=farmer_id
+        )
+        
+        if not user_dir.exists():
+            return []
+        
+        files = []
+        for file_path in user_dir.iterdir():
+            if file_path.is_file() and file_path.name != ".gitkeep":
+                files.append({
+                    "name": file_path.name,
+                    "size": file_path.stat().st_size,
+                    "path": str(file_path.relative_to(self.UPLOAD_ROOT)),
+                    "url": self.get_file_url(str(file_path.relative_to(self.UPLOAD_ROOT)))
+                })
+        
+        return files
     
     # ✅ UPDATED CORS - ADD YOUR VERCEL FRONTEND HERE
     ALLOWED_ORIGINS = [
@@ -105,3 +202,16 @@ class Settings:
     ]
 
 settings = Settings()
+
+# Create uploads directory on startup
+if __name__ == "__main__":
+    # Create main uploads directory
+    settings.UPLOAD_ROOT.mkdir(exist_ok=True)
+    
+    # Create .gitkeep in root uploads
+    gitkeep = settings.UPLOAD_ROOT / ".gitkeep"
+    if not gitkeep.exists():
+        gitkeep.touch()
+    
+    print(f"Uploads directory: {settings.UPLOAD_ROOT}")
+    print(f"Uploads directory exists: {settings.UPLOAD_ROOT.exists()}")
