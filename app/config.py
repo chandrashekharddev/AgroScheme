@@ -83,7 +83,7 @@ class Settings:
         # Determine folder name
         if farmer_id:
             # Use farmer_id, sanitize for filesystem
-            folder_name = f"farmer_{farmer_id.replace('/', '_').replace('\\', '_')}"
+            folder_name = "farmer_" + farmer_id.replace('/', '_').replace('\\', '_')
         else:
             folder_name = f"user_{user_id}"
         
