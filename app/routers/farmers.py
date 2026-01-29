@@ -37,7 +37,7 @@ async def upload_document(
     current_user: UserResponse = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Upload and process document for a farmer"""
+    """Upload and process document for a farmer with user-specific folder"""
     try:
         # Validate file size
         file.file.seek(0, 2)
@@ -58,17 +58,15 @@ async def upload_document(
                 detail=f"File type {file_ext} not allowed. Allowed: {settings.ALLOWED_EXTENSIONS}"
             )
         
-        # ✅ FIXED: Create farmer-specific folder with farmer_id
-        farmer_folder = str(current_user.id)
-        if hasattr(current_user, 'farmer_id') and current_user.farmer_id:
-            farmer_folder = str(current_user.farmer_id).replace('/', '_')
-        
-        user_upload_dir = Path(settings.UPLOAD_DIR) / farmer_folder
-        user_upload_dir.mkdir(parents=True, exist_ok=True)
+        # ✅ FIXED: Get user-specific upload directory using new settings method
+        user_dir = settings.get_user_upload_dir(
+            user_id=current_user.id,
+            farmer_id=current_user.farmer_id
+        )
         
         # Generate unique filename
         unique_filename = f"{uuid.uuid4()}{file_ext}"
-        file_path = user_upload_dir / unique_filename
+        file_path = user_dir / unique_filename
         
         # Save the file
         try:
@@ -80,8 +78,12 @@ async def upload_document(
                 detail=f"Failed to save file: {str(e)}"
             )
         
-        # Create relative path for database
-        relative_path = f"{farmer_folder}/{unique_filename}"
+        # ✅ FIXED: Generate relative path using new settings method
+        relative_path = settings.get_relative_path(
+            filename=unique_filename,
+            user_id=current_user.id,
+            farmer_id=current_user.farmer_id
+        )
         
         # Create document in database
         document_data = DocumentCreate(document_type=document_type)
@@ -129,6 +131,12 @@ async def upload_document(
             "document_type": document_type,
             "file_url": file_url,
             "file_path": relative_path,
+            "folder_name": settings.get_user_folder_name(
+                user_id=current_user.id,
+                farmer_id=current_user.farmer_id
+            ),
+            "original_filename": file.filename,
+            "file_size": file_size,
             "extracted_data": extracted_data,
             "verified": document.verified
         }
@@ -160,40 +168,154 @@ async def get_my_documents(
 async def debug_uploads(
     current_user: UserResponse = Depends(get_current_user)
 ):
-    import os
+    """Debug endpoint to check user's upload directory"""
     from pathlib import Path
     
-    # Get farmer folder name
-    farmer_folder = str(current_user.id)
-    if hasattr(current_user, 'farmer_id') and current_user.farmer_id:
-        farmer_folder = str(current_user.farmer_id).replace('/', '_')
+    # ✅ FIXED: Use new settings method
+    user_dir = settings.get_user_upload_dir(
+        user_id=current_user.id,
+        farmer_id=current_user.farmer_id
+    )
     
-    user_upload_dir = Path(settings.UPLOAD_DIR) / farmer_folder
-    
-    if not user_upload_dir.exists():
+    if not user_dir.exists():
         return {
             "message": "Upload directory does not exist",
-            "path": str(user_upload_dir),
-            "farmer_id": farmer_folder
+            "path": str(user_dir),
+            "user_id": current_user.id,
+            "farmer_id": current_user.farmer_id,
+            "folder_name": settings.get_user_folder_name(
+                user_id=current_user.id,
+                farmer_id=current_user.farmer_id
+            ),
+            "upload_root": str(settings.UPLOAD_ROOT),
+            "root_exists": settings.UPLOAD_ROOT.exists()
         }
     
     files = []
-    for file in user_upload_dir.iterdir():
+    for file in user_dir.iterdir():
         if file.is_file():
+            # Get relative path from uploads root
+            relative_path = file.relative_to(settings.UPLOAD_ROOT)
+            
             files.append({
                 "name": file.name,
                 "size": file.stat().st_size,
-                "path": str(file),
-                "relative_path": f"{farmer_folder}/{file.name}",
-                "url": f"{settings.API_BASE_URL}/uploads/{farmer_folder}/{file.name}"
+                "absolute_path": str(file),
+                "relative_path": str(relative_path),
+                "url": settings.get_file_url(str(relative_path)),
+                "created": file.stat().st_ctime,
+                "modified": file.stat().st_mtime
+            })
+    
+    # Check database documents
+    from app.database import get_db
+    from app.crud import get_user_documents
+    from sqlalchemy.orm import Session
+    
+    db_docs = []
+    try:
+        db_session = next(get_db())
+        db_documents = get_user_documents(db_session, current_user.id)
+        for doc in db_documents:
+            db_docs.append({
+                "id": doc.id,
+                "document_type": doc.document_type,
+                "file_path": doc.file_path,
+                "file_name": doc.file_name,
+                "verified": doc.verified,
+                "url": settings.get_file_url(doc.file_path) if doc.file_path else None
+            })
+    except:
+        db_docs = []
+    
+    return {
+        "user_id": current_user.id,
+        "farmer_id": current_user.farmer_id,
+        "folder_name": settings.get_user_folder_name(
+            user_id=current_user.id,
+            farmer_id=current_user.farmer_id
+        ),
+        "upload_dir": str(user_dir),
+        "exists": user_dir.exists(),
+        "files_on_disk": files,
+        "files_in_database": db_docs,
+        "total_files_on_disk": len(files),
+        "total_files_in_db": len(db_docs),
+        "api_base_url": settings.API_BASE_URL
+    }
+
+@router.get("/debug/uploads/list")
+async def list_all_uploads(
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """List all files in uploads directory (admin/debug)"""
+    if not settings.UPLOAD_ROOT.exists():
+        return {"error": "Uploads root directory does not exist"}
+    
+    all_folders = []
+    total_files = 0
+    
+    # List all user folders
+    for folder in settings.UPLOAD_ROOT.iterdir():
+        if folder.is_dir():
+            folder_files = []
+            for file in folder.iterdir():
+                if file.is_file():
+                    folder_files.append({
+                        "name": file.name,
+                        "size": file.stat().st_size,
+                        "path": str(file.relative_to(settings.UPLOAD_ROOT))
+                    })
+                    total_files += 1
+            
+            all_folders.append({
+                "name": folder.name,
+                "path": str(folder),
+                "file_count": len(folder_files),
+                "files": folder_files
             })
     
     return {
-        "farmer_id": farmer_folder,
-        "upload_dir": str(user_upload_dir),
-        "exists": user_upload_dir.exists(),
-        "files": files,
-        "total_files": len(files)
+        "upload_root": str(settings.UPLOAD_ROOT),
+        "total_folders": len(all_folders),
+        "total_files": total_files,
+        "folders": all_folders
+    }
+
+@router.delete("/debug/uploads/clean")
+async def clean_user_uploads(
+    current_user: UserResponse = Depends(get_current_user)
+):
+    """Clean user's upload directory (debug only)"""
+    user_dir = settings.get_user_upload_dir(
+        user_id=current_user.id,
+        farmer_id=current_user.farmer_id
+    )
+    
+    if not user_dir.exists():
+        return {
+            "success": True,
+            "message": "Directory does not exist",
+            "directory": str(user_dir)
+        }
+    
+    deleted_files = []
+    for file in user_dir.iterdir():
+        if file.is_file() and file.name != ".gitkeep":
+            try:
+                file.unlink()
+                deleted_files.append(file.name)
+            except Exception as e:
+                return {
+                    "success": False,
+                    "message": f"Failed to delete {file.name}: {str(e)}"
+                }
+    
+    return {
+        "success": True,
+        "message": f"Cleaned {len(deleted_files)} files",
+        "directory": str(user_dir),
+        "deleted_files": deleted_files
     }
 
 @router.get("/notifications", response_model=List[NotificationResponse])
@@ -262,4 +384,113 @@ async def get_dashboard_stats(
         "pending_actions": len(pending_docs),
         "eligible_schemes": eligible_count,
         "profile_complete": 75
+    }
+
+# ✅ NEW: Bulk upload endpoint
+@router.post("/upload-documents/bulk")
+async def upload_documents_bulk(
+    files: List[UploadFile] = File(...),
+    document_types: List[str] = Form(...),
+    current_user: UserResponse = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload multiple documents at once"""
+    if len(files) != len(document_types):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Number of files must match number of document types"
+        )
+    
+    results = []
+    errors = []
+    
+    for file, doc_type in zip(files, document_types):
+        try:
+            # Reuse the single upload logic
+            form_data = {
+                "document_type": doc_type,
+                "file": file
+            }
+            
+            # Note: In FastAPI, we can't directly call another endpoint
+            # So we'll duplicate the logic here
+            result = await upload_document_single(
+                document_type=doc_type,
+                file=file,
+                current_user=current_user,
+                db=db
+            )
+            results.append(result)
+            
+        except Exception as e:
+            errors.append({
+                "filename": file.filename,
+                "error": str(e)
+            })
+    
+    return {
+        "success": True,
+        "message": f"Uploaded {len(results)} files, {len(errors)} failed",
+        "results": results,
+        "errors": errors
+    }
+
+async def upload_document_single(
+    document_type: str,
+    file: UploadFile,
+    current_user: UserResponse,
+    db: Session
+):
+    """Helper function for single document upload (used by bulk)"""
+    # Same logic as upload_document endpoint
+    file.file.seek(0, 2)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    
+    if file_size > settings.MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File too large: {file.filename}"
+        )
+    
+    file_ext = Path(file.filename).suffix.lower()
+    if file_ext not in settings.ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid file type: {file.filename}"
+        )
+    
+    user_dir = settings.get_user_upload_dir(
+        user_id=current_user.id,
+        farmer_id=current_user.farmer_id
+    )
+    
+    unique_filename = f"{uuid.uuid4()}{file_ext}"
+    file_path = user_dir / unique_filename
+    
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    relative_path = settings.get_relative_path(
+        filename=unique_filename,
+        user_id=current_user.id,
+        farmer_id=current_user.farmer_id
+    )
+    
+    document_data = DocumentCreate(document_type=document_type)
+    document = create_document(
+        db=db,
+        document=document_data,
+        user_id=current_user.id,
+        file_path=relative_path,
+        file_name=file.filename,
+        file_size=file_size
+    )
+    
+    return {
+        "document_id": document.id,
+        "filename": file.filename,
+        "document_type": document_type,
+        "file_url": settings.get_file_url(relative_path),
+        "size": file_size
     }
