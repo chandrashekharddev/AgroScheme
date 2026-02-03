@@ -108,8 +108,7 @@ app.include_router(farmers.router, tags=["Farmers"])
 app.include_router(schemes.router, tags=["Schemes"])
 app.include_router(documents.router, tags=["Documents"])
 app.include_router(admin.router, tags=["Admin"])
-app.include_router(admin_auth.router, prefix="/admin", tags=["admin-auth"])
-app.include_router(admin_routers.router, prefix="/admin", tags=["admin"])
+app.include_router(admin_auth.router)
 
 # ==================== ROOT & HEALTH ENDPOINTS ====================
 
