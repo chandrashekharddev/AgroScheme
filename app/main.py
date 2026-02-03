@@ -1,15 +1,24 @@
-# app/main.py - UPDATED FOR USER-SPECIFIC UPLOADS
+# app/main.py - CORRECTED VERSION
 import os
 from pathlib import Path
+from datetime import datetime
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-# Imports
+# Database imports
 from app.database import engine, Base
 from app.config import settings
-from app.routers import auth, farmers, schemes, documents, admin, admin_auth, admin_routers,admin_fixed
+
+# Router imports - FIXED: Only import what actually exists
+try:
+    from app.routers import auth, farmers, schemes, documents
+    ROUTERS_LOADED = True
+except ImportError as e:
+    print(f"⚠️ Router import error: {e}")
+    ROUTERS_LOADED = False
 
 # ✅ ENSURE UPLOADS DIRECTORY EXISTS WITH PROPER STRUCTURE
 def init_uploads_directory():
@@ -68,7 +77,9 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.PROJECT_VERSION,
-    description="AI-powered platform for farmers"
+    description="AI-powered platform for farmers",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 # ✅ PRINT DEBUG INFO
@@ -81,11 +92,10 @@ print(f"Uploads Root: {settings.UPLOAD_ROOT}")
 print(f"API Base URL: {settings.API_BASE_URL}")
 print(f"CORS Allowed Origins: {len(settings.ALLOWED_ORIGINS)} origins")
 if settings.ALLOWED_ORIGINS:
-    print(f"  - {settings.ALLOWED_ORIGINS[0]}")
-    if len(settings.ALLOWED_ORIGINS) > 1:
-        print(f"  - {settings.ALLOWED_ORIGINS[1]}")
-        if len(settings.ALLOWED_ORIGINS) > 2:
-            print(f"  - ... and {len(settings.ALLOWED_ORIGINS) - 2} more")
+    for i, origin in enumerate(settings.ALLOWED_ORIGINS[:3]):
+        print(f"  - {origin}")
+    if len(settings.ALLOWED_ORIGINS) > 3:
+        print(f"  - ... and {len(settings.ALLOWED_ORIGINS) - 3} more")
 print("=" * 50)
 
 # ✅ CORS MIDDLEWARE
@@ -102,15 +112,97 @@ app.add_middleware(
 # Important: This must be mounted before routers
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# Include routers
-app.include_router(auth.router, tags=["Authentication"])
-app.include_router(farmers.router, tags=["Farmers"])
-app.include_router(schemes.router, tags=["Schemes"])
-app.include_router(documents.router, tags=["Documents"])
-app.include_router(admin.router, tags=["Admin"])
-app.include_router(admin_auth.router, prefix="/admin", tags=["admin-auth"])
-app.include_router(admin_routers.router, prefix="/admin", tags=["admin"])
-app.include_router(admin_fixed.router)
+# Include routers if they exist
+if ROUTERS_LOADED:
+    app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+    app.include_router(farmers.router, prefix="/farmers", tags=["Farmers"])
+    app.include_router(schemes.router, prefix="/schemes", tags=["Schemes"])
+    app.include_router(documents.router, prefix="/documents", tags=["Documents"])
+
+# ==================== DIRECT ADMIN ENDPOINTS IN MAIN.PY ====================
+# Add admin endpoints directly here to avoid router issues
+
+class AdminLogin(BaseModel):
+    username: str
+    password: str
+
+@app.post("/admin/login")
+async def admin_login(login_data: AdminLogin):
+    """
+    Direct admin login endpoint
+    Username: admin
+    Password: admin123
+    """
+    ADMIN_CREDENTIALS = {
+        "username": "admin",
+        "password": "admin123",
+        "name": "System Administrator",
+        "role": "admin"
+    }
+    
+    if (login_data.username != ADMIN_CREDENTIALS["username"] or 
+        login_data.password != ADMIN_CREDENTIALS["password"]):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid admin credentials"
+        )
+    
+    # Import security functions
+    from app.utils.security import create_access_token
+    from app.config import settings
+    
+    admin_user = {
+        "id": 0,
+        "username": ADMIN_CREDENTIALS["username"],
+        "full_name": ADMIN_CREDENTIALS["name"],
+        "role": ADMIN_CREDENTIALS["role"],
+        "is_admin": True
+    }
+    
+    access_token = create_access_token(
+        data={
+            "sub": "admin",
+            "role": "admin",
+            "is_admin": True
+        }
+    )
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": admin_user
+    }
+
+@app.get("/admin/health")
+async def admin_health():
+    """Admin health check"""
+    return {
+        "status": "healthy",
+        "service": "admin-api",
+        "timestamp": datetime.utcnow().isoformat(),
+        "endpoints": {
+            "POST /admin/login": "Admin login",
+            "GET /admin/health": "Health check",
+            "GET /admin": "Admin info"
+        }
+    }
+
+@app.get("/admin")
+async def admin_info():
+    """Admin API information"""
+    return {
+        "message": "AgroScheme Admin API",
+        "version": settings.PROJECT_VERSION,
+        "credentials": {
+            "username": "admin",
+            "password": "admin123"
+        },
+        "endpoints": [
+            "POST /admin/login - Admin login",
+            "GET /admin/health - Health check",
+            "GET /admin - This info"
+        ]
+    }
 
 # ==================== ROOT & HEALTH ENDPOINTS ====================
 
@@ -120,11 +212,13 @@ async def root():
         "message": "AgroScheme AI API",
         "version": settings.PROJECT_VERSION,
         "docs": "/docs",
+        "admin_docs": "/admin for admin endpoints",
         "health": "/health",
         "uploads_test": "/uploads-test",
         "cors_enabled": True,
         "upload_system": "user-specific folders enabled",
-        "api_base": settings.API_BASE_URL
+        "api_base": settings.API_BASE_URL,
+        "admin_login": "POST /admin/login with {'username':'admin','password':'admin123'}"
     }
 
 @app.get("/health")
@@ -133,6 +227,7 @@ async def health_check():
     health_status = {
         "status": "healthy",
         "service": "agroscheme-api",
+        "timestamp": datetime.utcnow().isoformat(),
         "database": "connected",
         "uploads": "available"
     }
@@ -159,14 +254,14 @@ async def health_check():
 
 @app.get("/test")
 async def test():
-    return {"message": "API working", "timestamp": "now"}
+    return {"message": "API working", "timestamp": datetime.utcnow().isoformat()}
 
 @app.get("/cors-test")
 async def cors_test():
     return {
         "message": "CORS test successful",
         "allowed_origins": settings.ALLOWED_ORIGINS,
-        "timestamp": "now",
+        "timestamp": datetime.utcnow().isoformat(),
         "upload_system": "active"
     }
 
@@ -320,12 +415,13 @@ async def startup_event():
     print(f"🌐 API Base URL: {settings.API_BASE_URL}")
     print(f"🔗 Swagger Docs: {settings.API_BASE_URL}/docs")
     print(f"📊 Health Check: {settings.API_BASE_URL}/health")
+    print(f"👑 Admin Login: {settings.API_BASE_URL}/admin/login")
     print("=" * 50)
     print("Available endpoints:")
     print(f"  • POST   /auth/register          - Register new farmer")
     print(f"  • POST   /auth/login             - Login")
-    print(f"  • POST   /farmers/upload-document - Upload document")
-    print(f"  • GET    /farmers/debug-uploads   - Debug uploads")
+    print(f"  • POST   /admin/login            - Admin login (admin/admin123)")
+    print(f"  • GET    /admin                  - Admin info")
     print(f"  • GET    /uploads-test           - Test uploads")
     print("=" * 50)
 
@@ -346,7 +442,13 @@ async def not_found_handler(request, exc):
             "Check the API documentation at /docs",
             "Verify the endpoint URL",
             "Ensure you're using the correct HTTP method"
-        ]
+        ],
+        "available_endpoints": {
+            "farmer_auth": "/auth/login, /auth/register",
+            "admin": "/admin/login",
+            "health": "/health",
+            "docs": "/docs"
+        }
     }
 
 @app.exception_handler(500)
@@ -355,6 +457,6 @@ async def server_error_handler(request, exc):
     return {
         "error": "Internal Server Error",
         "message": "Something went wrong on our end",
-        "request_id": "N/A",  # In production, add request ID
+        "timestamp": datetime.utcnow().isoformat(),
         "support": "Contact support if the issue persists"
     }
