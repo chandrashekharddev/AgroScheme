@@ -20,15 +20,6 @@ def get_user_by_email(db: Session, email: str) -> Optional[User]:
 def get_user_by_farmer_id(db: Session, farmer_id: str) -> Optional[User]:
     return db.query(User).filter(User.farmer_id == farmer_id).first()
 
-# Add this function at the beginning of crud.py (before other functions)
-def authenticate_admin(db: Session, username: str, password: str):
-    """
-    Placeholder function for admin authentication.
-    The actual admin auth is hardcoded in admin_auth.py.
-    """
-    # This is just a placeholder since admin auth is hardcoded
-    # In the future, you can implement database-based admin auth here
-    return None
 def create_user(db: Session, user: UserCreate) -> User:
     state_code = user.state[:2].upper()
     district_code = user.district[:2].upper()
