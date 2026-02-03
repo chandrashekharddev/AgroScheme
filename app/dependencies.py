@@ -21,16 +21,7 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
-        
-    if payload.get("is_admin"):
-        return {
-            "id": 0,
-            "is_admin": True,
-            "role": "admin",
-            "full_name": "System Administrator",
-            "username": "admin"
-        }
-        
+    
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(
@@ -44,26 +35,12 @@ def get_current_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-
-    user_dict = {
-        "id": user.id,
-        "farmer_id": user.farmer_id,
-        "full_name": user.full_name,
-        "mobile_number": user.mobile_number,
-        "email": user.email,
-        "state": user.state,
-        "district": user.district,
-        "village": user.village,
-        "role": user.role,
-        "is_admin": False
-    }
     
-    return user_dict
-   
+    return user
 
 def verify_admin(current_user = Depends(get_current_user)):
     """Verify if current user has admin role"""
-    if not current_user.get("is_admin"):
+    if not hasattr(current_user, 'role') or current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized. Admin privileges required."
