@@ -23,56 +23,10 @@ class Settings:
     # Gemini AI
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
     
-    # ✅ FILE UPLOAD SETTINGS (CRITICAL FIXES)
-    # Upload directory - always use "uploads" for consistency
-    UPLOAD_DIR = "uploads"
-    
-    # Maximum file size (5MB)
+    # File Upload
     MAX_FILE_SIZE = 5 * 1024 * 1024
-    
-    # Allowed file extensions
-    ALLOWED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".pdf", ".heic", ".heif", ".webp"]
-    
-    # ✅ API BASE URL FOR FILE SERVING (MOST IMPORTANT!)
-    # This is used to generate file URLs in responses
-    @property
-    def API_BASE_URL(self):
-        """
-        Get the base URL for file serving.
-        In production (Render), use the Render URL.
-        In development, use localhost.
-        """
-        # Check for environment variable first
-        env_url = os.getenv("API_BASE_URL")
-        if env_url:
-            return env_url.rstrip('/')  # Remove trailing slash
-        
-        # Check if running on Render
-        if "RENDER" in os.environ:
-            # Get Render external URL
-            render_url = os.getenv("RENDER_EXTERNAL_URL")
-            if render_url:
-                return render_url.rstrip('/')
-        
-        # Default to localhost for development
-        return "http://localhost:8000"
-    
-    # ✅ FILE URL HELPER METHOD (add this method)
-    def get_file_url(self, file_path: str) -> str:
-        """Generate full URL for a file"""
-        if not file_path:
-            return ""
-        
-        # Remove leading slash if present
-        if file_path.startswith('/'):
-            file_path = file_path[1:]
-        
-        # If it's already a full URL, return as-is
-        if file_path.startswith('http'):
-            return file_path
-        
-        # Otherwise, construct URL
-        return f"{self.API_BASE_URL}/uploads/{file_path}"
+    ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
+    UPLOAD_DIR = "uploads"
     
     # ✅ UPDATED CORS - ADD YOUR VERCEL FRONTEND HERE
     ALLOWED_ORIGINS = [
@@ -98,10 +52,6 @@ class Settings:
         
         # Wildcards for Vercel preview deployments
         "https://*.vercel.app",
-        
-        # Add wildcard for local development
-        "http://localhost:*",
-        "http://127.0.0.1:*",
     ]
 
 settings = Settings()
