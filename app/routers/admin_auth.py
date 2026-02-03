@@ -4,10 +4,10 @@ from sqlalchemy.orm import Session
 from datetime import timedelta
 
 from app.database import get_db
-from app.schemas import AdminLogin, Token
+from app.schemas import AdminLogin, Token, UserResponse
+from app.crud import authenticate_admin, get_user_by_id
 from app.utils.security import create_access_token
 from app.config import settings
-from app.dependencies import get_current_user  # Add this import
 
 router = APIRouter(prefix="/admin", tags=["admin-auth"])
 
