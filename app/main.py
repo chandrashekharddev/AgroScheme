@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 # Imports
 from app.database import engine, Base
 from app.config import settings
-from app.routers import auth, farmers, schemes, documents, admin
+from app.routers import auth, farmers, schemes, documents, admin, admin_auth, admin_routers
 
 # ✅ ENSURE UPLOADS DIRECTORY EXISTS WITH PROPER STRUCTURE
 def init_uploads_directory():
