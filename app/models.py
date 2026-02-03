@@ -57,9 +57,7 @@ class User(Base):
     documents = relationship("Document", back_populates="user")
     applications = relationship("Application", back_populates="user")
     notifications = relationship("Notification", back_populates="user")
-    role = Column(Enum(UserRole), default=UserRole.FARMER)
-    is_admin = Column(Boolean, default=False)
-    
+
 class Document(Base):
     __tablename__ = "documents"
     id = Column(Integer, primary_key=True, index=True)
