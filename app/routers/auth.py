@@ -34,6 +34,52 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
     # Create user
     return create_user(db=db, user=user)
 
+# @router.post("/login", response_model=Token)
+# async def login(form_data: UserLogin, db: Session = Depends(get_db)):
+#     user = authenticate_user(db, form_data.mobile_number, form_data.password)
+#     if not user:
+#         raise HTTPException(
+#             status_code=status.HTTP_401_UNAUTHORIZED,
+#             detail="Incorrect mobile number or password",
+#             headers={"WWW-Authenticate": "Bearer"},
+#         )
+    
+#     # Create access token
+#     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+#     access_token = create_access_token(
+#         data={"sub": str(user.id), "role": user.role},
+#         expires_delta=access_token_expires
+#     )
+    
+#     return {
+#         "access_token": access_token,
+#         "token_type": "bearer",
+#         "user": user
+#     }
+
+# @router.post("/login-with-otp", response_model=Token)
+# async def login_with_otp(mobile_number: str, db: Session = Depends(get_db)):
+#     user = get_user_by_mobile(db, mobile_number)
+#     if not user:
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND,
+#             detail="User not found"
+#         )
+    
+#     # Create access token
+#     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+#     access_token = create_access_token(
+#         data={"sub": str(user.id), "role": user.role},
+#         expires_delta=access_token_expires
+#     )
+    
+#     return {
+#         "access_token": access_token,
+#         "token_type": "bearer",
+#         "user": user
+#     }
+# In app/routers/auth.py - UPDATE THE LOGIN FUNCTIONS:
+
 @router.post("/login", response_model=Token)
 async def login(form_data: UserLogin, db: Session = Depends(get_db)):
     user = authenticate_user(db, form_data.mobile_number, form_data.password)
@@ -44,10 +90,13 @@ async def login(form_data: UserLogin, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # Create access token
+    # ✅ FIX: Convert Enum to string for token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id), "role": user.role},
+        data={
+            "sub": str(user.id), 
+            "role": user.role.value  # ← ADD .value to get string
+        },
         expires_delta=access_token_expires
     )
     
@@ -57,6 +106,7 @@ async def login(form_data: UserLogin, db: Session = Depends(get_db)):
         "user": user
     }
 
+# ✅ DO THE SAME FOR login_with_otp:
 @router.post("/login-with-otp", response_model=Token)
 async def login_with_otp(mobile_number: str, db: Session = Depends(get_db)):
     user = get_user_by_mobile(db, mobile_number)
@@ -66,10 +116,12 @@ async def login_with_otp(mobile_number: str, db: Session = Depends(get_db)):
             detail="User not found"
         )
     
-    # Create access token
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": str(user.id), "role": user.role},
+        data={
+            "sub": str(user.id), 
+            "role": user.role.value  # ← ADD .value
+        },
         expires_delta=access_token_expires
     )
     
@@ -78,7 +130,7 @@ async def login_with_otp(mobile_number: str, db: Session = Depends(get_db)):
         "token_type": "bearer",
         "user": user
     }
-
+    
 @router.post("/send-otp")
 async def send_otp(mobile_number: str):
     return {
