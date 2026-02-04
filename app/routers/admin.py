@@ -50,7 +50,6 @@ async def check_admin_status(current_user = Depends(get_current_admin_user)):
 # ✅ Get admin dashboard statistics
 @router.get("/stats")
 async def get_stats(
-    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get admin dashboard statistics"""
