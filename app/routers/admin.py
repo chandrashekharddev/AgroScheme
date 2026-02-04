@@ -2,16 +2,20 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
+from sqlalchemy import func
 import json
 
 from app.database import get_db
-from app.schemas import SchemeCreate, SchemeResponse, AdminStats, UserResponse, DocumentResponse, ApplicationResponse, AdminDashboardStats
+from app.schemas import (
+    SchemeCreate, SchemeResponse, AdminStats, UserResponse, 
+    DocumentResponse, ApplicationResponse, AdminDashboardStats
+)
 from app.crud import (
     create_scheme, get_all_schemes, get_all_farmers,
     get_admin_stats, get_user_by_id, get_user_applications, update_application_status,
     get_scheme_by_id, get_scheme_by_code, get_all_applications, get_application_by_id,
     get_all_documents_for_verification, get_detailed_stats, verify_document_admin,
-    get_all_farmers_with_stats, get_document_by_id, get_user_by_farmer_id
+    get_all_farmers_with_stats, get_document_by_id
 )
 from app.dependencies import verify_admin
 from app.models import User, Document, Application, GovernmentScheme, Notification
@@ -39,20 +43,47 @@ async def get_dashboard_stats(
 ):
     """Get comprehensive dashboard statistics"""
     try:
-        stats = get_detailed_stats(db)
+        # First get basic stats
+        basic_stats = get_admin_stats(db)
         
-        # Calculate trends (you can implement more sophisticated trend calculation)
-        # For now, using placeholder trends
-        stats.update({
-            "farmer_growth": 12.5,
+        # Then get detailed stats
+        try:
+            detailed_stats = get_detailed_stats(db)
+        except Exception as e:
+            print(f"Error getting detailed stats: {e}")
+            detailed_stats = {
+                "recent_registrations": [],
+                "top_schemes": []
+            }
+        
+        # If get_detailed_stats returns None, use empty defaults
+        if detailed_stats is None:
+            detailed_stats = {
+                "recent_registrations": [],
+                "top_schemes": []
+            }
+        
+        # Combine all stats
+        result = {
+            "total_farmers": basic_stats.total_farmers,
+            "total_applications": basic_stats.total_applications,
+            "total_schemes": basic_stats.total_schemes,
+            "benefits_distributed": basic_stats.benefits_distributed,
+            "pending_verifications": basic_stats.pending_verifications,
+            "ai_accuracy": basic_stats.ai_accuracy,
+            "farmer_growth": 12.5,  # Calculate these from your data
             "application_growth": 8.3,
             "scheme_growth": 5.2,
             "benefit_growth": 15.7,
-            "accuracy_growth": 2.1
-        })
+            "accuracy_growth": 2.1,
+            "recent_registrations": detailed_stats.get("recent_registrations", []),
+            "top_schemes": detailed_stats.get("top_schemes", [])
+        }
         
-        return stats
+        return result
+        
     except Exception as e:
+        print(f"Error in get_dashboard_stats: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch dashboard stats: {str(e)}"
@@ -93,17 +124,18 @@ async def get_all_users(
 ):
     """Get all registered farmers/users"""
     try:
-        farmers = get_all_farmers_with_stats(db, skip, limit)
+        # Get farmers using the function that exists
+        farmers = get_all_farmers(db, skip, limit)
         
         # Apply search filter if provided
         if search:
             search = search.lower()
             farmers = [
                 farmer for farmer in farmers
-                if (search in farmer["full_name"].lower() or
-                    search in farmer["farmer_id"].lower() or
-                    search in (farmer.get("mobile_number") or "").lower() or
-                    search in (farmer.get("email") or "").lower())
+                if (search in farmer.full_name.lower() or
+                    search in farmer.farmer_id.lower() or
+                    search in farmer.mobile_number.lower() or
+                    (farmer.email and search in farmer.email.lower()))
             ]
         
         return farmers
@@ -182,8 +214,6 @@ async def get_user_details(
             "main_crops": user.main_crops,
             "bank_account_number": user.bank_account_number,
             "ifsc_code": user.ifsc_code,
-            "aadhar_number": user.aadhar_number,
-            "pan_number": user.pan_number,
             "created_at": user.created_at,
             "applications": [
                 {
@@ -217,70 +247,7 @@ async def get_user_details(
             detail=f"Failed to fetch user details: {str(e)}"
         )
 
-@router.get("/users/{user_id}/applications")
-async def get_user_applications_admin(
-    user_id: int,
-    admin_user = Depends(verify_admin),
-    db: Session = Depends(get_db)
-):
-    """Get all applications for a specific user"""
-    try:
-        # Check if user exists
-        user = get_user_by_id(db, user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        applications = get_user_applications(db, user_id)
-        result = []
-        
-        for app in applications:
-            app_data = {
-                "id": app.id,
-                "application_id": app.application_id,
-                "status": app.status,
-                "applied_amount": app.applied_amount,
-                "approved_amount": app.approved_amount,
-                "applied_at": app.applied_at,
-                "updated_at": app.updated_at,
-                "status_history": app.status_history
-            }
-            
-            # Get scheme details
-            scheme = get_scheme_by_id(db, app.scheme_id)
-            if scheme:
-                app_data["scheme"] = {
-                    "id": scheme.id,
-                    "scheme_name": scheme.scheme_name,
-                    "scheme_code": scheme.scheme_code,
-                    "scheme_type": scheme.scheme_type,
-                    "benefit_amount": scheme.benefit_amount,
-                    "department": scheme.department or "Agriculture"
-                }
-            
-            result.append(app_data)
-        
-        return {
-            "user_id": user_id,
-            "user_name": user.full_name,
-            "farmer_id": user.farmer_id,
-            "applications": result,
-            "total_applications": len(applications),
-            "approved_applications": len([app for app in applications if app.status == "approved"]),
-            "pending_applications": len([app for app in applications if app.status == "pending"]),
-            "total_benefits": sum([app.approved_amount or 0 for app in applications if app.status == "approved"])
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch user applications: {str(e)}"
-        )
-
-@router.get("/applications", response_model=List[ApplicationResponse])
+@router.get("/applications")
 async def get_all_applications_admin(
     skip: int = 0,
     limit: int = 100,
@@ -499,8 +466,6 @@ async def get_top_schemes(
     """Get top schemes by number of applications"""
     try:
         # Query to get top schemes
-        from sqlalchemy import func
-        
         top_schemes = db.query(
             GovernmentScheme,
             func.count(Application.id).label('application_count'),
@@ -514,12 +479,9 @@ async def get_top_schemes(
         result = []
         for scheme, app_count, total_benefits in top_schemes:
             result.append({
-                "id": scheme.id,
                 "scheme_name": scheme.scheme_name,
-                "scheme_code": scheme.scheme_code,
                 "application_count": app_count or 0,
-                "total_benefits": float(total_benefits or 0),
-                "is_active": scheme.is_active
+                "total_benefits": float(total_benefits or 0)
             })
         
         return result
