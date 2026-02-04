@@ -69,7 +69,12 @@ def update_user(db: Session, user_id: int, user_update: UserUpdate) -> Optional[
     db.commit()
     db.refresh(db_user)
     return db_user
+# Add this function to your crud.py
 
+def get_all_farmers(db: Session, skip: int = 0, limit: int = 100):
+    """Get all farmers (users with role 'farmer')"""
+    return db.query(User).filter(User.role == "farmer").offset(skip).limit(limit).all()
+    
 def authenticate_user(db: Session, mobile_number: str, password: str) -> Optional[User]:
     user = get_user_by_mobile(db, mobile_number)
     if not user:
