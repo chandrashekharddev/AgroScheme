@@ -1,4 +1,4 @@
-# app/routers/admin.py - UPDATED VERSION WITH PROPER ADMIN AUTH
+# app/routers/admin.py - PUBLIC VERSION (NO AUTH REQUIRED)
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
@@ -15,14 +15,13 @@ from app.crud import (
     get_document_by_id, update_document_verification, mark_notification_as_read,
     get_user_applications, get_user_documents
 )
-from app.utils.security import get_current_admin_user
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-# ✅ Admin dashboard page
+# ✅ Admin dashboard page (PUBLIC)
 @router.get("/admin.html")
-async def serve_admin_page(current_user = Depends(get_current_admin_user)):
-    """Serve the admin HTML page (admin only)"""
+async def serve_admin_page():
+    """Serve the admin HTML page (PUBLIC ACCESS)"""
     try:
         return FileResponse("static/admin.html")
     except FileNotFoundError:
@@ -31,28 +30,26 @@ async def serve_admin_page(current_user = Depends(get_current_admin_user)):
             detail="Admin page not found"
         )
 
-# ✅ Check admin status
+# ✅ Check admin status (PUBLIC - always returns admin)
 @router.get("/check")
-async def check_admin_status(current_user = Depends(get_current_admin_user)):
-    """Check if current user is admin"""
+async def check_admin_status():
+    """Check admin status (PUBLIC)"""
     return {
         "success": True,
         "is_admin": True,
         "user": {
-            "id": current_user.id,
-            "name": current_user.full_name,
-            "mobile": current_user.mobile_number,
-            "email": current_user.email,
-            "role": current_user.role.value
+            "id": 1,
+            "name": "Administrator",
+            "mobile": "9999999999",
+            "email": "admin@agroscheme.com",
+            "role": "admin"
         }
     }
 
-# ✅ Get admin dashboard statistics
+# ✅ Get admin dashboard statistics (PUBLIC)
 @router.get("/stats")
-async def get_stats(
-    db: Session = Depends(get_db)
-):
-    """Get admin dashboard statistics"""
+async def get_stats(db: Session = Depends(get_db)):
+    """Get admin dashboard statistics (PUBLIC)"""
     try:
         # Calculate stats with proper Enum comparison
         total_farmers = db.query(func.count(User.id)).filter(User.role == UserRole.FARMER).scalar() or 0
@@ -81,8 +78,8 @@ async def get_stats(
             "pending_verifications": pending_verifications,
             "pending_applications": pending_applications,
             "ai_accuracy": 98.5,
-            "admin_name": current_user.full_name,
-            "admin_role": current_user.role.value
+            "admin_name": "Administrator",
+            "admin_role": "admin"
         }
     except Exception as e:
         raise HTTPException(
@@ -90,13 +87,10 @@ async def get_stats(
             detail=f"Failed to fetch stats: {str(e)}"
         )
 
-# ✅ Get comprehensive dashboard statistics
+# ✅ Get comprehensive dashboard statistics (PUBLIC)
 @router.get("/dashboard-stats", response_model=AdminDashboardStats)
-async def get_dashboard_stats(
-    current_user = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Get comprehensive dashboard statistics"""
+async def get_dashboard_stats(db: Session = Depends(get_db)):
+    """Get comprehensive dashboard statistics (PUBLIC)"""
     try:
         # Get basic stats
         total_farmers = db.query(func.count(User.id)).filter(User.role == UserRole.FARMER).scalar() or 0
@@ -173,14 +167,10 @@ async def get_dashboard_stats(
             detail=f"Failed to fetch dashboard stats: {str(e)}"
         )
 
-# ✅ Add a new government scheme
+# ✅ Add a new government scheme (PUBLIC)
 @router.post("/schemes", response_model=SchemeResponse)
-async def add_scheme(
-    scheme: SchemeCreate,
-    current_user = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Add a new government scheme"""
+async def add_scheme(scheme: SchemeCreate, db: Session = Depends(get_db)):
+    """Add a new government scheme (PUBLIC)"""
     try:
         # Check if scheme code already exists
         existing_scheme = get_scheme_by_code(db, scheme.scheme_code)
@@ -190,7 +180,7 @@ async def add_scheme(
                 detail=f"Scheme with code '{scheme.scheme_code}' already exists"
             )
         
-        return create_scheme(db=db, scheme=scheme, created_by=current_user.full_name)
+        return create_scheme(db=db, scheme=scheme, created_by="Administrator")
     except HTTPException:
         raise
     except Exception as e:
@@ -199,16 +189,15 @@ async def add_scheme(
             detail=f"Failed to add scheme: {str(e)}"
         )
 
-# ✅ Get all registered farmers/users
+# ✅ Get all registered farmers/users (PUBLIC)
 @router.get("/users", response_model=List[UserResponse])
 async def get_all_users(
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
-    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
-    """Get all registered farmers/users"""
+    """Get all registered farmers/users (PUBLIC)"""
     try:
         # Get all farmers
         farmers = db.query(User).filter(User.role == UserRole.FARMER).offset(skip).limit(limit).all()
@@ -231,14 +220,10 @@ async def get_all_users(
             detail=f"Failed to fetch users: {str(e)}"
         )
 
-# ✅ Get recent user registrations
+# ✅ Get recent user registrations (PUBLIC)
 @router.get("/users/recent")
-async def get_recent_users(
-    limit: int = 5,
-    current_user = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Get recent user registrations"""
+async def get_recent_users(limit: int = 5, db: Session = Depends(get_db)):
+    """Get recent user registrations (PUBLIC)"""
     try:
         recent_users = db.query(User)\
             .filter(User.role == UserRole.FARMER)\
@@ -264,14 +249,10 @@ async def get_recent_users(
             detail=f"Failed to fetch recent users: {str(e)}"
         )
 
-# ✅ Get detailed information about a specific user
+# ✅ Get detailed information about a specific user (PUBLIC)
 @router.get("/users/{user_id}")
-async def get_user_details(
-    user_id: int,
-    current_user = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Get detailed information about a specific user"""
+async def get_user_details(user_id: int, db: Session = Depends(get_db)):
+    """Get detailed information about a specific user (PUBLIC)"""
     try:
         user = get_user_by_id(db, user_id)
         if not user:
@@ -341,17 +322,16 @@ async def get_user_details(
             detail=f"Failed to fetch user details: {str(e)}"
         )
 
-# ✅ Get all applications with filters
+# ✅ Get all applications with filters (PUBLIC)
 @router.get("/applications")
 async def get_all_applications_admin(
     skip: int = 0,
     limit: int = 100,
     status: Optional[str] = None,
     search: Optional[str] = None,
-    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
-    """Get all applications with filters"""
+    """Get all applications with filters (PUBLIC)"""
     try:
         # Build query
         query = db.query(Application)
@@ -421,14 +401,10 @@ async def get_all_applications_admin(
             detail=f"Failed to fetch applications: {str(e)}"
         )
 
-# ✅ Get detailed application information
+# ✅ Get detailed application information (PUBLIC)
 @router.get("/applications/{application_id}")
-async def get_application_details(
-    application_id: int,
-    current_user = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Get detailed application information"""
+async def get_application_details(application_id: int, db: Session = Depends(get_db)):
+    """Get detailed application information (PUBLIC)"""
     try:
         application = get_application_by_id(db, application_id)
         if not application:
@@ -487,17 +463,16 @@ async def get_application_details(
             detail=f"Failed to fetch application details: {str(e)}"
         )
 
-# ✅ Update application status (admin only)
+# ✅ Update application status (PUBLIC)
 @router.put("/applications/{application_id}/status")
 async def update_application_status_admin(
     application_id: int,
     status: str,
     approved_amount: Optional[float] = None,
     remarks: Optional[str] = None,
-    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
-    """Update application status (admin only)"""
+    """Update application status (PUBLIC)"""
     try:
         # Validate status
         valid_statuses = ["pending", "under_review", "approved", "rejected", "completed", "docs_needed"]
@@ -522,7 +497,7 @@ async def update_application_status_admin(
                 app_data["admin_remarks"] = []
             app_data["admin_remarks"].append({
                 "remarks": remarks,
-                "admin": current_user.full_name,
+                "admin": "Administrator",
                 "timestamp": datetime.utcnow().isoformat()
             })
             application.application_data = app_data
@@ -535,7 +510,7 @@ async def update_application_status_admin(
             "new_status": status,
             "approved_amount": approved_amount,
             "updated_at": application.updated_at,
-            "admin": current_user.full_name
+            "admin": "Administrator"
         }
     except HTTPException:
         raise
@@ -545,17 +520,16 @@ async def update_application_status_admin(
             detail=f"Failed to update application status: {str(e)}"
         )
 
-# ✅ Get all schemes (admin version - shows all including inactive)
+# ✅ Get all schemes (PUBLIC)
 @router.get("/schemes", response_model=List[SchemeResponse])
 async def get_all_schemes_admin(
     active_only: bool = False,
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
-    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
-    """Get all schemes (admin version - shows all including inactive)"""
+    """Get all schemes (admin version - shows all including inactive) (PUBLIC)"""
     try:
         schemes = get_all_schemes(db, skip, limit, active_only)
         
@@ -576,14 +550,10 @@ async def get_all_schemes_admin(
             detail=f"Failed to fetch schemes: {str(e)}"
         )
 
-# ✅ Get top schemes by number of applications
+# ✅ Get top schemes by number of applications (PUBLIC)
 @router.get("/schemes/top")
-async def get_top_schemes(
-    limit: int = 5,
-    current_user = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Get top schemes by number of applications"""
+async def get_top_schemes(limit: int = 5, db: Session = Depends(get_db)):
+    """Get top schemes by number of applications (PUBLIC)"""
     try:
         # Query to get top schemes
         top_schemes = db.query(
@@ -615,16 +585,15 @@ async def get_top_schemes(
             detail=f"Failed to fetch top schemes: {str(e)}"
         )
 
-# ✅ Get all pending documents for verification
+# ✅ Get all pending documents for verification (PUBLIC)
 @router.get("/documents/pending")
 async def get_pending_documents(
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
-    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
-    """Get all pending documents for verification"""
+    """Get all pending documents for verification (PUBLIC)"""
     try:
         documents = db.query(Document)\
             .filter(Document.verified == False)\
@@ -677,14 +646,10 @@ async def get_pending_documents(
             detail=f"Failed to fetch pending documents: {str(e)}"
         )
 
-# ✅ Get document details for verification
+# ✅ Get document details for verification (PUBLIC)
 @router.get("/documents/{document_id}")
-async def get_document_details(
-    document_id: int,
-    current_user = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Get document details for verification"""
+async def get_document_details(document_id: int, db: Session = Depends(get_db)):
+    """Get document details for verification (PUBLIC)"""
     try:
         document = get_document_by_id(db, document_id)
         if not document:
@@ -726,16 +691,15 @@ async def get_document_details(
             detail=f"Failed to fetch document details: {str(e)}"
         )
 
-# ✅ Verify or reject a document (admin only)
+# ✅ Verify or reject a document (PUBLIC)
 @router.put("/documents/{document_id}/verify")
 async def verify_document_admin_endpoint(
     document_id: int,
     status: str,  # "verified" or "rejected"
     remarks: Optional[str] = None,
-    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
-    """Verify or reject a document (admin only)"""
+    """Verify or reject a document (PUBLIC)"""
     try:
         if status not in ["verified", "rejected"]:
             raise HTTPException(
@@ -760,7 +724,7 @@ async def verify_document_admin_endpoint(
             "status": status,
             "verified": verified,
             "verification_date": document.verification_date,
-            "admin": current_user.full_name
+            "admin": "Administrator"
         }
     except HTTPException:
         raise
@@ -770,15 +734,14 @@ async def verify_document_admin_endpoint(
             detail=f"Failed to verify document: {str(e)}"
         )
 
-# ✅ Get admin notifications (system-wide)
+# ✅ Get admin notifications (system-wide) (PUBLIC)
 @router.get("/notifications")
 async def get_admin_notifications(
     unread_only: bool = False,
     limit: int = 20,
-    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
-    """Get admin notifications (system-wide)"""
+    """Get admin notifications (system-wide) (PUBLIC)"""
     try:
         # Get system notifications
         query = db.query(Notification)\
@@ -820,14 +783,13 @@ async def get_admin_notifications(
             detail=f"Failed to fetch notifications: {str(e)}"
         )
 
-# ✅ Mark notifications as read
+# ✅ Mark notifications as read (PUBLIC)
 @router.post("/notifications/mark-read")
 async def mark_notifications_read(
     notification_ids: List[int],
-    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
-    """Mark notifications as read"""
+    """Mark notifications as read (PUBLIC)"""
     try:
         updated = []
         for notif_id in notification_ids:
@@ -846,14 +808,10 @@ async def mark_notifications_read(
             detail=f"Failed to mark notifications as read: {str(e)}"
         )
 
-# ✅ Generate admin reports
+# ✅ Generate admin reports (PUBLIC)
 @router.get("/reports/generate")
-async def generate_report(
-    period: str = "30",  # days
-    current_user = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Generate admin reports"""
+async def generate_report(period: str = "30", db: Session = Depends(get_db)):
+    """Generate admin reports (PUBLIC)"""
     try:
         days = int(period)
         start_date = datetime.utcnow() - timedelta(days=days)
@@ -943,14 +901,10 @@ async def generate_report(
             detail=f"Failed to generate report: {str(e)}"
         )
 
-# ✅ Delete or deactivate a scheme
+# ✅ Delete or deactivate a scheme (PUBLIC)
 @router.delete("/schemes/{scheme_id}")
-async def delete_scheme(
-    scheme_id: int,
-    current_user = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Delete a scheme (admin only)"""
+async def delete_scheme(scheme_id: int, db: Session = Depends(get_db)):
+    """Delete a scheme (PUBLIC)"""
     try:
         scheme = get_scheme_by_id(db, scheme_id)
         if not scheme:
@@ -995,14 +949,10 @@ async def delete_scheme(
             detail=f"Failed to delete scheme: {str(e)}"
         )
 
-# ✅ Make a user admin
+# ✅ Make a user admin (PUBLIC)
 @router.post("/users/{user_id}/promote")
-async def promote_to_admin(
-    user_id: int,
-    current_user = Depends(get_current_admin_user),
-    db: Session = Depends(get_db)
-):
-    """Promote a user to admin role"""
+async def promote_to_admin(user_id: int, db: Session = Depends(get_db)):
+    """Promote a user to admin role (PUBLIC)"""
     try:
         user = db.query(User).filter(User.id == user_id).first()
         if not user:
