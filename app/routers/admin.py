@@ -11,7 +11,7 @@ from app.schemas import (
     DocumentResponse, ApplicationResponse, AdminDashboardStats
 )
 from app.crud import (
-    create_scheme, get_all_schemes, get_all_farmers,
+    create_scheme, get_all_schemes,
     get_admin_stats, get_user_by_id, get_user_applications, update_application_status,
     get_scheme_by_id, get_scheme_by_code, get_all_applications, get_application_by_id,
     get_all_documents_for_verification, get_detailed_stats, verify_document_admin,
@@ -124,8 +124,16 @@ async def get_all_users(
 ):
     """Get all registered farmers/users"""
     try:
-        # Get farmers using the function that exists
-        farmers = get_all_farmers(db, skip, limit)
+        # Use get_all_farmers_with_stats instead of get_all_farmers
+        farmers_data = get_all_farmers_with_stats(db, skip, limit)
+        
+        # Convert to UserResponse format
+        farmers = []
+        for farmer_data in farmers_data:
+            # Find the user in database to get full User object
+            user = db.query(User).filter(User.id == farmer_data["id"]).first()
+            if user:
+                farmers.append(user)
         
         # Apply search filter if provided
         if search:
@@ -245,6 +253,69 @@ async def get_user_details(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch user details: {str(e)}"
+        )
+
+@router.get("/users/{user_id}/applications")
+async def get_user_applications_admin(
+    user_id: int,
+    admin_user = Depends(verify_admin),
+    db: Session = Depends(get_db)
+):
+    """Get all applications for a specific user"""
+    try:
+        # Check if user exists
+        user = get_user_by_id(db, user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        applications = get_user_applications(db, user_id)
+        result = []
+        
+        for app in applications:
+            app_data = {
+                "id": app.id,
+                "application_id": app.application_id,
+                "status": app.status,
+                "applied_amount": app.applied_amount,
+                "approved_amount": app.approved_amount,
+                "applied_at": app.applied_at,
+                "updated_at": app.updated_at,
+                "status_history": app.status_history
+            }
+            
+            # Get scheme details
+            scheme = get_scheme_by_id(db, app.scheme_id)
+            if scheme:
+                app_data["scheme"] = {
+                    "id": scheme.id,
+                    "scheme_name": scheme.scheme_name,
+                    "scheme_code": scheme.scheme_code,
+                    "scheme_type": scheme.scheme_type,
+                    "benefit_amount": scheme.benefit_amount,
+                    "department": scheme.department or "Agriculture"
+                }
+            
+            result.append(app_data)
+        
+        return {
+            "user_id": user_id,
+            "user_name": user.full_name,
+            "farmer_id": user.farmer_id,
+            "applications": result,
+            "total_applications": len(applications),
+            "approved_applications": len([app for app in applications if app.status == "approved"]),
+            "pending_applications": len([app for app in applications if app.status == "pending"]),
+            "total_benefits": sum([app.approved_amount or 0 for app in applications if app.status == "approved"])
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch user applications: {str(e)}"
         )
 
 @router.get("/applications")
@@ -861,3 +932,4 @@ async def delete_scheme(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete scheme: {str(e)}"
         )
+        
