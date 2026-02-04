@@ -3,6 +3,24 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
+class AdminDashboardStats(BaseModel):
+    total_farmers: int
+    total_applications: int
+    total_schemes: int
+    benefits_distributed: float
+    pending_verifications: int
+    ai_accuracy: float
+    farmer_growth: float
+    application_growth: float
+    scheme_growth: float
+    benefit_growth: float
+    accuracy_growth: float
+    recent_registrations: List[Dict[str, Any]]
+    top_schemes: List[Dict[str, Any]]
+
+    class Config:
+        from_attributes = True
+        
 class UserRole(str, Enum):
     FARMER = "farmer"
     ADMIN = "admin"
