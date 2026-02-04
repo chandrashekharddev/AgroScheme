@@ -1,4 +1,5 @@
-# app/utils/security.py - COMPLETE VERSION
+# app/utils/security.py - UPDATED VERSION
+
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
@@ -7,8 +8,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.crud import get_user_by_id
-from app.models import UserRole
+# REMOVE THIS: from app.crud import get_user_by_id  # ← Causes circular import
+from app.models import User, UserRole
 from app.config import settings
 
 # Password hashing
@@ -43,7 +44,12 @@ def verify_token(token: str) -> Optional[dict]:
     except JWTError:
         return None
 
-# ✅ NEW: Get current user from token
+# ✅ NEW: Helper function to get user by ID (avoids circular import)
+def get_user_by_id_local(db: Session, user_id: int):
+    """Get user by ID without importing from crud.py"""
+    return db.query(User).filter(User.id == user_id).first()
+
+# ✅ Get current user from token
 async def get_current_user(
     token: str = Depends(oauth2_scheme), 
     db: Session = Depends(get_db)
@@ -65,8 +71,8 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
     
-    # Get user from database
-    user = get_user_by_id(db, user_id=int(user_id))
+    # Get user from database using local function
+    user = get_user_by_id_local(db, user_id=int(user_id))
     if user is None:
         raise credentials_exception
     
