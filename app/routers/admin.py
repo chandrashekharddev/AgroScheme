@@ -8,14 +8,13 @@ import json
 from app.database import get_db
 from app.schemas import (
     SchemeCreate, SchemeResponse, AdminStats, UserResponse, 
-    DocumentResponse, ApplicationResponse, AdminDashboardStats
+    AdminDashboardStats
 )
 from app.crud import (
     create_scheme, get_all_schemes,
     get_admin_stats, get_user_by_id, get_user_applications, update_application_status,
-    get_scheme_by_id, get_scheme_by_code, get_all_applications, get_application_by_id,
-    get_all_documents_for_verification, get_detailed_stats, verify_document_admin,
-    get_all_farmers_with_stats, get_document_by_id
+    get_scheme_by_id, get_scheme_by_code, get_application_by_id,
+    get_document_by_id
 )
 from app.dependencies import verify_admin
 from app.models import User, Document, Application, GovernmentScheme, Notification
@@ -46,22 +45,43 @@ async def get_dashboard_stats(
         # First get basic stats
         basic_stats = get_admin_stats(db)
         
-        # Then get detailed stats
-        try:
-            detailed_stats = get_detailed_stats(db)
-        except Exception as e:
-            print(f"Error getting detailed stats: {e}")
-            detailed_stats = {
-                "recent_registrations": [],
-                "top_schemes": []
-            }
+        # Get recent registrations
+        recent_users = db.query(User)\
+            .filter(User.role == "farmer")\
+            .order_by(User.created_at.desc())\
+            .limit(5)\
+            .all()
         
-        # If get_detailed_stats returns None, use empty defaults
-        if detailed_stats is None:
-            detailed_stats = {
-                "recent_registrations": [],
-                "top_schemes": []
+        recent_registrations = [
+            {
+                "farmer_id": user.farmer_id,
+                "full_name": user.full_name,
+                "mobile_number": user.mobile_number,
+                "state": user.state,
+                "created_at": user.created_at
             }
+            for user in recent_users
+        ]
+        
+        # Get top schemes
+        top_schemes = db.query(
+            GovernmentScheme.scheme_name,
+            func.count(Application.id).label('application_count'),
+            func.sum(Application.approved_amount).label('total_benefits')
+        ).join(Application, GovernmentScheme.id == Application.scheme_id, isouter=True)\
+         .group_by(GovernmentScheme.id)\
+         .order_by(func.count(Application.id).desc())\
+         .limit(5)\
+         .all()
+        
+        top_schemes_list = [
+            {
+                "scheme_name": scheme.scheme_name,
+                "application_count": scheme.application_count or 0,
+                "total_benefits": float(scheme.total_benefits or 0)
+            }
+            for scheme in top_schemes
+        ]
         
         # Combine all stats
         result = {
@@ -71,13 +91,13 @@ async def get_dashboard_stats(
             "benefits_distributed": basic_stats.benefits_distributed,
             "pending_verifications": basic_stats.pending_verifications,
             "ai_accuracy": basic_stats.ai_accuracy,
-            "farmer_growth": 12.5,  # Calculate these from your data
+            "farmer_growth": 12.5,  # Placeholder values
             "application_growth": 8.3,
             "scheme_growth": 5.2,
             "benefit_growth": 15.7,
             "accuracy_growth": 2.1,
-            "recent_registrations": detailed_stats.get("recent_registrations", []),
-            "top_schemes": detailed_stats.get("top_schemes", [])
+            "recent_registrations": recent_registrations,
+            "top_schemes": top_schemes_list
         }
         
         return result
@@ -124,16 +144,8 @@ async def get_all_users(
 ):
     """Get all registered farmers/users"""
     try:
-        # Use get_all_farmers_with_stats instead of get_all_farmers
-        farmers_data = get_all_farmers_with_stats(db, skip, limit)
-        
-        # Convert to UserResponse format
-        farmers = []
-        for farmer_data in farmers_data:
-            # Find the user in database to get full User object
-            user = db.query(User).filter(User.id == farmer_data["id"]).first()
-            if user:
-                farmers.append(user)
+        # Get all farmers
+        farmers = db.query(User).filter(User.role == "farmer").offset(skip).limit(limit).all()
         
         # Apply search filter if provided
         if search:
@@ -255,69 +267,6 @@ async def get_user_details(
             detail=f"Failed to fetch user details: {str(e)}"
         )
 
-@router.get("/users/{user_id}/applications")
-async def get_user_applications_admin(
-    user_id: int,
-    admin_user = Depends(verify_admin),
-    db: Session = Depends(get_db)
-):
-    """Get all applications for a specific user"""
-    try:
-        # Check if user exists
-        user = get_user_by_id(db, user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        applications = get_user_applications(db, user_id)
-        result = []
-        
-        for app in applications:
-            app_data = {
-                "id": app.id,
-                "application_id": app.application_id,
-                "status": app.status,
-                "applied_amount": app.applied_amount,
-                "approved_amount": app.approved_amount,
-                "applied_at": app.applied_at,
-                "updated_at": app.updated_at,
-                "status_history": app.status_history
-            }
-            
-            # Get scheme details
-            scheme = get_scheme_by_id(db, app.scheme_id)
-            if scheme:
-                app_data["scheme"] = {
-                    "id": scheme.id,
-                    "scheme_name": scheme.scheme_name,
-                    "scheme_code": scheme.scheme_code,
-                    "scheme_type": scheme.scheme_type,
-                    "benefit_amount": scheme.benefit_amount,
-                    "department": scheme.department or "Agriculture"
-                }
-            
-            result.append(app_data)
-        
-        return {
-            "user_id": user_id,
-            "user_name": user.full_name,
-            "farmer_id": user.farmer_id,
-            "applications": result,
-            "total_applications": len(applications),
-            "approved_applications": len([app for app in applications if app.status == "approved"]),
-            "pending_applications": len([app for app in applications if app.status == "pending"]),
-            "total_benefits": sum([app.approved_amount or 0 for app in applications if app.status == "approved"])
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch user applications: {str(e)}"
-        )
-
 @router.get("/applications")
 async def get_all_applications_admin(
     skip: int = 0,
@@ -329,7 +278,20 @@ async def get_all_applications_admin(
 ):
     """Get all applications with filters"""
     try:
-        applications = get_all_applications(db, skip, limit, status)
+        # Build query
+        query = db.query(Application)
+        
+        # Apply status filter
+        if status:
+            valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed"]
+            if status not in valid_statuses:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+                )
+            query = query.filter(Application.status == status)
+        
+        applications = query.offset(skip).limit(limit).all()
         
         result = []
         for app in applications:
@@ -572,7 +534,11 @@ async def get_pending_documents(
 ):
     """Get all pending documents for verification"""
     try:
-        documents = get_all_documents_for_verification(db, skip, limit)
+        documents = db.query(Document)\
+            .filter(Document.verified == False)\
+            .order_by(Document.uploaded_at.desc())\
+            .offset(skip).limit(limit)\
+            .all()
         
         result = []
         for doc in documents:
@@ -633,17 +599,6 @@ async def get_document_details(
         # Get user details
         user = get_user_by_id(db, document.user_id)
         
-        # Get application if document is linked to one
-        related_application = None
-        if document.related_application_id:
-            application = get_application_by_id(db, document.related_application_id)
-            if application:
-                related_application = {
-                    "id": application.id,
-                    "application_id": application.application_id,
-                    "status": application.status
-                }
-        
         return {
             "id": document.id,
             "document_type": document.document_type,
@@ -661,7 +616,6 @@ async def get_document_details(
                 "mobile_number": user.mobile_number if user else None,
                 "email": user.email if user else None
             } if user else None,
-            "related_application": related_application,
             "file_url": f"/uploads/user_{document.user_id}/{document.file_name}" if document.file_path else None
         }
     except HTTPException:
@@ -690,8 +644,9 @@ async def verify_document_admin_endpoint(
         
         verified = status == "verified"
         
-        # Verify document
-        document = verify_document_admin(db, document_id, verified, remarks)
+        # Verify document using crud function
+        from app.crud import update_document_verification
+        document = update_document_verification(db, document_id, verified, {"admin_remarks": remarks} if remarks else None)
         if not document:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -725,7 +680,6 @@ async def get_admin_notifications(
     try:
         # Get system notifications
         query = db.query(Notification)\
-            .filter(Notification.notification_type.in_(["system", "application", "document_verification"]))\
             .order_by(Notification.created_at.desc())
         
         if unread_only:
@@ -932,4 +886,3 @@ async def delete_scheme(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete scheme: {str(e)}"
         )
-        
