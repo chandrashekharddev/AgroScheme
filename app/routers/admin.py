@@ -1,28 +1,63 @@
+# app/routers/admin.py - UPDATED VERSION WITH PROPER ADMIN AUTH
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from sqlalchemy import func
+from fastapi.responses import FileResponse
 
 from app.database import get_db
 from app.schemas import SchemeCreate, SchemeResponse, AdminStats, UserResponse, AdminDashboardStats
-from app.models import User, Document, Application, GovernmentScheme, Notification
+from app.models import User, Document, Application, GovernmentScheme, Notification, UserRole
+from app.crud import (
+    get_user_by_id, get_scheme_by_code, create_scheme, get_scheme_by_id,
+    get_all_schemes, get_application_by_id, update_application_status,
+    get_document_by_id, update_document_verification, mark_notification_as_read,
+    get_user_applications, get_user_documents
+)
+from app.utils.security import get_current_admin_user
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-# Simple admin verification
-def verify_admin():
-    return {"is_admin": True, "full_name": "Administrator"}
+# ✅ Admin dashboard page
+@router.get("/admin.html")
+async def serve_admin_page(current_user = Depends(get_current_admin_user)):
+    """Serve the admin HTML page (admin only)"""
+    try:
+        return FileResponse("static/admin.html")
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Admin page not found"
+        )
 
+# ✅ Check admin status
+@router.get("/check")
+async def check_admin_status(current_user = Depends(get_current_admin_user)):
+    """Check if current user is admin"""
+    return {
+        "success": True,
+        "is_admin": True,
+        "user": {
+            "id": current_user.id,
+            "name": current_user.full_name,
+            "mobile": current_user.mobile_number,
+            "email": current_user.email,
+            "role": current_user.role.value
+        }
+    }
+
+# ✅ Get admin dashboard statistics
 @router.get("/stats")
 async def get_stats(
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get admin dashboard statistics"""
     try:
-        # Calculate stats directly
-        total_farmers = db.query(func.count(User.id)).filter(User.role == "farmer").scalar() or 0
+        # Calculate stats with proper Enum comparison
+        total_farmers = db.query(func.count(User.id)).filter(User.role == UserRole.FARMER).scalar() or 0
+        total_admins = db.query(func.count(User.id)).filter(User.role == UserRole.ADMIN).scalar() or 0
         total_applications = db.query(func.count(Application.id)).scalar() or 0
         total_schemes = db.query(func.count(GovernmentScheme.id)).scalar() or 0
         benefits_distributed = db.query(func.sum(Application.approved_amount)).filter(
@@ -32,13 +67,23 @@ async def get_stats(
             Document.verified == False
         ).scalar() or 0
         
+        # Get pending applications
+        pending_applications = db.query(func.count(Application.id)).filter(
+            Application.status == "pending"
+        ).scalar() or 0
+        
         return {
+            "success": True,
             "total_farmers": total_farmers,
+            "total_admins": total_admins,
             "total_applications": total_applications,
             "total_schemes": total_schemes,
             "benefits_distributed": float(benefits_distributed),
             "pending_verifications": pending_verifications,
-            "ai_accuracy": 98.5
+            "pending_applications": pending_applications,
+            "ai_accuracy": 98.5,
+            "admin_name": current_user.full_name,
+            "admin_role": current_user.role.value
         }
     except Exception as e:
         raise HTTPException(
@@ -46,20 +91,28 @@ async def get_stats(
             detail=f"Failed to fetch stats: {str(e)}"
         )
 
-# Add other endpoints as needed...
+# ✅ Get comprehensive dashboard statistics
 @router.get("/dashboard-stats", response_model=AdminDashboardStats)
 async def get_dashboard_stats(
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get comprehensive dashboard statistics"""
     try:
-        # First get basic stats
-        basic_stats = get_admin_stats(db)
+        # Get basic stats
+        total_farmers = db.query(func.count(User.id)).filter(User.role == UserRole.FARMER).scalar() or 0
+        total_applications = db.query(func.count(Application.id)).scalar() or 0
+        total_schemes = db.query(func.count(GovernmentScheme.id)).scalar() or 0
+        benefits_distributed = db.query(func.sum(Application.approved_amount)).filter(
+            Application.status == "approved"
+        ).scalar() or 0
+        pending_verifications = db.query(func.count(Document.id)).filter(
+            Document.verified == False
+        ).scalar() or 0
         
         # Get recent registrations
         recent_users = db.query(User)\
-            .filter(User.role == "farmer")\
+            .filter(User.role == UserRole.FARMER)\
             .order_by(User.created_at.desc())\
             .limit(5)\
             .all()
@@ -97,13 +150,13 @@ async def get_dashboard_stats(
         
         # Combine all stats
         result = {
-            "total_farmers": basic_stats.total_farmers,
-            "total_applications": basic_stats.total_applications,
-            "total_schemes": basic_stats.total_schemes,
-            "benefits_distributed": basic_stats.benefits_distributed,
-            "pending_verifications": basic_stats.pending_verifications,
-            "ai_accuracy": basic_stats.ai_accuracy,
-            "farmer_growth": 12.5,  # Placeholder values
+            "total_farmers": total_farmers,
+            "total_applications": total_applications,
+            "total_schemes": total_schemes,
+            "benefits_distributed": float(benefits_distributed),
+            "pending_verifications": pending_verifications,
+            "ai_accuracy": 98.5,
+            "farmer_growth": 12.5,
             "application_growth": 8.3,
             "scheme_growth": 5.2,
             "benefit_growth": 15.7,
@@ -121,10 +174,11 @@ async def get_dashboard_stats(
             detail=f"Failed to fetch dashboard stats: {str(e)}"
         )
 
+# ✅ Add a new government scheme
 @router.post("/schemes", response_model=SchemeResponse)
 async def add_scheme(
     scheme: SchemeCreate,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Add a new government scheme"""
@@ -137,7 +191,7 @@ async def add_scheme(
                 detail=f"Scheme with code '{scheme.scheme_code}' already exists"
             )
         
-        return create_scheme(db=db, scheme=scheme, created_by=admin_user.full_name)
+        return create_scheme(db=db, scheme=scheme, created_by=current_user.full_name)
     except HTTPException:
         raise
     except Exception as e:
@@ -146,18 +200,19 @@ async def add_scheme(
             detail=f"Failed to add scheme: {str(e)}"
         )
 
+# ✅ Get all registered farmers/users
 @router.get("/users", response_model=List[UserResponse])
 async def get_all_users(
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get all registered farmers/users"""
     try:
         # Get all farmers
-        farmers = db.query(User).filter(User.role == "farmer").offset(skip).limit(limit).all()
+        farmers = db.query(User).filter(User.role == UserRole.FARMER).offset(skip).limit(limit).all()
         
         # Apply search filter if provided
         if search:
@@ -165,7 +220,7 @@ async def get_all_users(
             farmers = [
                 farmer for farmer in farmers
                 if (search in farmer.full_name.lower() or
-                    search in farmer.farmer_id.lower() or
+                    (farmer.farmer_id and search in farmer.farmer_id.lower()) or
                     search in farmer.mobile_number.lower() or
                     (farmer.email and search in farmer.email.lower()))
             ]
@@ -177,16 +232,17 @@ async def get_all_users(
             detail=f"Failed to fetch users: {str(e)}"
         )
 
+# ✅ Get recent user registrations
 @router.get("/users/recent")
 async def get_recent_users(
     limit: int = 5,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get recent user registrations"""
     try:
         recent_users = db.query(User)\
-            .filter(User.role == "farmer")\
+            .filter(User.role == UserRole.FARMER)\
             .order_by(User.created_at.desc())\
             .limit(limit)\
             .all()
@@ -209,10 +265,11 @@ async def get_recent_users(
             detail=f"Failed to fetch recent users: {str(e)}"
         )
 
+# ✅ Get detailed information about a specific user
 @router.get("/users/{user_id}")
 async def get_user_details(
     user_id: int,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get detailed information about a specific user"""
@@ -228,30 +285,33 @@ async def get_user_details(
         applications = get_user_applications(db, user_id)
         
         # Get user's documents
-        from app.crud import get_user_documents
         documents = get_user_documents(db, user_id)
         
         return {
-            "id": user.id,
-            "farmer_id": user.farmer_id,
-            "full_name": user.full_name,
-            "mobile_number": user.mobile_number,
-            "email": user.email,
-            "state": user.state,
-            "district": user.district,
-            "village": user.village,
-            "total_land_acres": user.total_land_acres,
-            "annual_income": user.annual_income,
-            "land_type": user.land_type,
-            "main_crops": user.main_crops,
-            "bank_account_number": user.bank_account_number,
-            "ifsc_code": user.ifsc_code,
-            "created_at": user.created_at,
+            "success": True,
+            "user": {
+                "id": user.id,
+                "farmer_id": user.farmer_id,
+                "full_name": user.full_name,
+                "mobile_number": user.mobile_number,
+                "email": user.email,
+                "state": user.state,
+                "district": user.district,
+                "village": user.village,
+                "total_land_acres": user.total_land_acres,
+                "annual_income": user.annual_income,
+                "land_type": user.land_type,
+                "main_crops": user.main_crops,
+                "bank_account_number": user.bank_account_number,
+                "ifsc_code": user.ifsc_code,
+                "created_at": user.created_at,
+                "role": user.role.value
+            },
             "applications": [
                 {
                     "id": app.id,
                     "application_id": app.application_id,
-                    "status": app.status,
+                    "status": app.status.value if hasattr(app.status, 'value') else app.status,
                     "applied_amount": app.applied_amount,
                     "approved_amount": app.approved_amount,
                     "applied_at": app.applied_at
@@ -261,15 +321,18 @@ async def get_user_details(
             "documents": [
                 {
                     "id": doc.id,
-                    "document_type": doc.document_type,
+                    "document_type": doc.document_type.value if hasattr(doc.document_type, 'value') else doc.document_type,
                     "file_name": doc.file_name,
                     "verified": doc.verified,
                     "uploaded_at": doc.uploaded_at
                 }
                 for doc in documents
             ],
-            "total_applications": len(applications),
-            "total_verified_documents": len([d for d in documents if d.verified])
+            "stats": {
+                "total_applications": len(applications),
+                "total_verified_documents": len([d for d in documents if d.verified]),
+                "approved_applications": len([a for a in applications if a.status == "approved"])
+            }
         }
     except HTTPException:
         raise
@@ -279,13 +342,14 @@ async def get_user_details(
             detail=f"Failed to fetch user details: {str(e)}"
         )
 
+# ✅ Get all applications with filters
 @router.get("/applications")
 async def get_all_applications_admin(
     skip: int = 0,
     limit: int = 100,
     status: Optional[str] = None,
     search: Optional[str] = None,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get all applications with filters"""
@@ -316,7 +380,7 @@ async def get_all_applications_admin(
             app_data = {
                 "id": app.id,
                 "application_id": app.application_id,
-                "status": app.status,
+                "status": app.status.value if hasattr(app.status, 'value') else app.status,
                 "applied_amount": app.applied_amount,
                 "approved_amount": app.approved_amount,
                 "applied_at": app.applied_at,
@@ -347,17 +411,22 @@ async def get_all_applications_admin(
             
             result.append(app_data)
         
-        return result
+        return {
+            "success": True,
+            "count": len(result),
+            "applications": result
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch applications: {str(e)}"
         )
 
+# ✅ Get detailed application information
 @router.get("/applications/{application_id}")
 async def get_application_details(
     application_id: int,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get detailed application information"""
@@ -379,34 +448,37 @@ async def get_application_details(
         app_data = application.application_data or {}
         
         return {
-            "id": application.id,
-            "application_id": application.application_id,
-            "status": application.status,
-            "applied_amount": application.applied_amount,
-            "approved_amount": application.approved_amount,
-            "applied_at": application.applied_at,
-            "updated_at": application.updated_at,
-            "status_history": application.status_history,
-            "user": {
-                "id": user.id if user else None,
-                "farmer_id": user.farmer_id if user else None,
-                "full_name": user.full_name if user else "Unknown",
-                "mobile_number": user.mobile_number if user else None,
-                "email": user.email if user else None,
-                "state": user.state if user else None,
-                "district": user.district if user else None,
-                "village": user.village if user else None
-            } if user else None,
-            "scheme": {
-                "id": scheme.id if scheme else None,
-                "scheme_name": scheme.scheme_name if scheme else "Unknown",
-                "scheme_code": scheme.scheme_code if scheme else None,
-                "scheme_type": scheme.scheme_type if scheme else None,
-                "benefit_amount": scheme.benefit_amount if scheme else None,
-                "eligibility_criteria": scheme.eligibility_criteria if scheme else None,
-                "required_documents": scheme.required_documents if scheme else None
-            } if scheme else None,
-            "application_data": app_data
+            "success": True,
+            "application": {
+                "id": application.id,
+                "application_id": application.application_id,
+                "status": application.status.value if hasattr(application.status, 'value') else application.status,
+                "applied_amount": application.applied_amount,
+                "approved_amount": application.approved_amount,
+                "applied_at": application.applied_at,
+                "updated_at": application.updated_at,
+                "status_history": application.status_history,
+                "user": {
+                    "id": user.id if user else None,
+                    "farmer_id": user.farmer_id if user else None,
+                    "full_name": user.full_name if user else "Unknown",
+                    "mobile_number": user.mobile_number if user else None,
+                    "email": user.email if user else None,
+                    "state": user.state if user else None,
+                    "district": user.district if user else None,
+                    "village": user.village if user else None
+                } if user else None,
+                "scheme": {
+                    "id": scheme.id if scheme else None,
+                    "scheme_name": scheme.scheme_name if scheme else "Unknown",
+                    "scheme_code": scheme.scheme_code if scheme else None,
+                    "scheme_type": scheme.scheme_type.value if hasattr(scheme.scheme_type, 'value') else scheme.scheme_type,
+                    "benefit_amount": scheme.benefit_amount if scheme else None,
+                    "eligibility_criteria": scheme.eligibility_criteria if scheme else None,
+                    "required_documents": scheme.required_documents if scheme else None
+                } if scheme else None,
+                "application_data": app_data
+            }
         }
     except HTTPException:
         raise
@@ -416,13 +488,14 @@ async def get_application_details(
             detail=f"Failed to fetch application details: {str(e)}"
         )
 
+# ✅ Update application status (admin only)
 @router.put("/applications/{application_id}/status")
 async def update_application_status_admin(
     application_id: int,
     status: str,
     approved_amount: Optional[float] = None,
     remarks: Optional[str] = None,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Update application status (admin only)"""
@@ -450,7 +523,7 @@ async def update_application_status_admin(
                 app_data["admin_remarks"] = []
             app_data["admin_remarks"].append({
                 "remarks": remarks,
-                "admin": admin_user.full_name,
+                "admin": current_user.full_name,
                 "timestamp": datetime.utcnow().isoformat()
             })
             application.application_data = app_data
@@ -462,7 +535,8 @@ async def update_application_status_admin(
             "application_id": application_id,
             "new_status": status,
             "approved_amount": approved_amount,
-            "updated_at": application.updated_at
+            "updated_at": application.updated_at,
+            "admin": current_user.full_name
         }
     except HTTPException:
         raise
@@ -472,13 +546,14 @@ async def update_application_status_admin(
             detail=f"Failed to update application status: {str(e)}"
         )
 
+# ✅ Get all schemes (admin version - shows all including inactive)
 @router.get("/schemes", response_model=List[SchemeResponse])
 async def get_all_schemes_admin(
     active_only: bool = False,
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get all schemes (admin version - shows all including inactive)"""
@@ -502,17 +577,18 @@ async def get_all_schemes_admin(
             detail=f"Failed to fetch schemes: {str(e)}"
         )
 
+# ✅ Get top schemes by number of applications
 @router.get("/schemes/top")
 async def get_top_schemes(
     limit: int = 5,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get top schemes by number of applications"""
     try:
         # Query to get top schemes
         top_schemes = db.query(
-            GovernmentScheme,
+            GovernmentScheme.scheme_name,
             func.count(Application.id).label('application_count'),
             func.sum(Application.approved_amount).label('total_benefits')
         ).join(Application, GovernmentScheme.id == Application.scheme_id, isouter=True)\
@@ -521,27 +597,32 @@ async def get_top_schemes(
          .limit(limit)\
          .all()
         
-        result = []
-        for scheme, app_count, total_benefits in top_schemes:
-            result.append({
+        result = [
+            {
                 "scheme_name": scheme.scheme_name,
-                "application_count": app_count or 0,
-                "total_benefits": float(total_benefits or 0)
-            })
+                "application_count": scheme.application_count or 0,
+                "total_benefits": float(scheme.total_benefits or 0)
+            }
+            for scheme in top_schemes
+        ]
         
-        return result
+        return {
+            "success": True,
+            "top_schemes": result
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch top schemes: {str(e)}"
         )
 
+# ✅ Get all pending documents for verification
 @router.get("/documents/pending")
 async def get_pending_documents(
     skip: int = 0,
     limit: int = 100,
     search: Optional[str] = None,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get all pending documents for verification"""
@@ -559,7 +640,7 @@ async def get_pending_documents(
             
             doc_data = {
                 "id": doc.id,
-                "document_type": doc.document_type,
+                "document_type": doc.document_type.value if hasattr(doc.document_type, 'value') else doc.document_type,
                 "file_name": doc.file_name,
                 "file_path": doc.file_path,
                 "uploaded_at": doc.uploaded_at,
@@ -579,24 +660,29 @@ async def get_pending_documents(
                 search_lower = search.lower()
                 matches = (
                     (doc_data["user"] and doc_data["user"]["full_name"] and search_lower in doc_data["user"]["full_name"].lower()) or
-                    (doc_data["document_type"] and search_lower in doc_data["document_type"].lower())
+                    (doc_data["document_type"] and search_lower in str(doc_data["document_type"]).lower())
                 )
                 if not matches:
                     continue
             
             result.append(doc_data)
         
-        return result
+        return {
+            "success": True,
+            "count": len(result),
+            "pending_documents": result
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch pending documents: {str(e)}"
         )
 
+# ✅ Get document details for verification
 @router.get("/documents/{document_id}")
 async def get_document_details(
     document_id: int,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get document details for verification"""
@@ -612,23 +698,26 @@ async def get_document_details(
         user = get_user_by_id(db, document.user_id)
         
         return {
-            "id": document.id,
-            "document_type": document.document_type,
-            "file_name": document.file_name,
-            "file_path": document.file_path,
-            "file_size": document.file_size,
-            "uploaded_at": document.uploaded_at,
-            "verified": document.verified,
-            "verification_date": document.verification_date,
-            "extracted_data": document.extracted_data,
-            "user": {
-                "id": user.id if user else None,
-                "farmer_id": user.farmer_id if user else None,
-                "full_name": user.full_name if user else "Unknown",
-                "mobile_number": user.mobile_number if user else None,
-                "email": user.email if user else None
-            } if user else None,
-            "file_url": f"/uploads/user_{document.user_id}/{document.file_name}" if document.file_path else None
+            "success": True,
+            "document": {
+                "id": document.id,
+                "document_type": document.document_type.value if hasattr(document.document_type, 'value') else document.document_type,
+                "file_name": document.file_name,
+                "file_path": document.file_path,
+                "file_size": document.file_size,
+                "uploaded_at": document.uploaded_at,
+                "verified": document.verified,
+                "verification_date": document.verification_date,
+                "extracted_data": document.extracted_data,
+                "user": {
+                    "id": user.id if user else None,
+                    "farmer_id": user.farmer_id if user else None,
+                    "full_name": user.full_name if user else "Unknown",
+                    "mobile_number": user.mobile_number if user else None,
+                    "email": user.email if user else None
+                } if user else None,
+                "file_url": f"/uploads/user_{document.user_id}/{document.file_name}" if document.file_path else None
+            }
         }
     except HTTPException:
         raise
@@ -638,12 +727,13 @@ async def get_document_details(
             detail=f"Failed to fetch document details: {str(e)}"
         )
 
+# ✅ Verify or reject a document (admin only)
 @router.put("/documents/{document_id}/verify")
 async def verify_document_admin_endpoint(
     document_id: int,
     status: str,  # "verified" or "rejected"
     remarks: Optional[str] = None,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Verify or reject a document (admin only)"""
@@ -657,7 +747,6 @@ async def verify_document_admin_endpoint(
         verified = status == "verified"
         
         # Verify document using crud function
-        from app.crud import update_document_verification
         document = update_document_verification(db, document_id, verified, {"admin_remarks": remarks} if remarks else None)
         if not document:
             raise HTTPException(
@@ -671,7 +760,8 @@ async def verify_document_admin_endpoint(
             "document_id": document_id,
             "status": status,
             "verified": verified,
-            "verification_date": document.verification_date
+            "verification_date": document.verification_date,
+            "admin": current_user.full_name
         }
     except HTTPException:
         raise
@@ -681,11 +771,12 @@ async def verify_document_admin_endpoint(
             detail=f"Failed to verify document: {str(e)}"
         )
 
+# ✅ Get admin notifications (system-wide)
 @router.get("/notifications")
 async def get_admin_notifications(
     unread_only: bool = False,
     limit: int = 20,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Get admin notifications (system-wide)"""
@@ -720,23 +811,25 @@ async def get_admin_notifications(
                 } if user else None
             })
         
-        return result
+        return {
+            "success": True,
+            "notifications": result
+        }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch notifications: {str(e)}"
         )
 
+# ✅ Mark notifications as read
 @router.post("/notifications/mark-read")
 async def mark_notifications_read(
     notification_ids: List[int],
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Mark notifications as read"""
     try:
-        from app.crud import mark_notification_as_read
-        
         updated = []
         for notif_id in notification_ids:
             notification = mark_notification_as_read(db, notif_id)
@@ -754,10 +847,11 @@ async def mark_notifications_read(
             detail=f"Failed to mark notifications as read: {str(e)}"
         )
 
+# ✅ Generate admin reports
 @router.get("/reports/generate")
 async def generate_report(
     period: str = "30",  # days
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Generate admin reports"""
@@ -782,7 +876,7 @@ async def generate_report(
         
         new_users = db.query(func.count(User.id))\
             .filter(User.created_at >= start_date)\
-            .filter(User.role == "farmer")\
+            .filter(User.role == UserRole.FARMER)\
             .scalar() or 0
         
         # Get applications by status
@@ -793,7 +887,8 @@ async def generate_report(
             .all()
         
         for status, count in status_counts:
-            status_distribution[status] = count
+            status_key = status.value if hasattr(status, 'value') else status
+            status_distribution[status_key] = count
         
         # Get applications trend (last 7 days)
         if days <= 7:
@@ -828,6 +923,7 @@ async def generate_report(
                 trend_data[i] = week_count
         
         return {
+            "success": True,
             "period_days": days,
             "start_date": start_date.isoformat(),
             "end_date": datetime.utcnow().isoformat(),
@@ -848,10 +944,11 @@ async def generate_report(
             detail=f"Failed to generate report: {str(e)}"
         )
 
+# ✅ Delete or deactivate a scheme
 @router.delete("/schemes/{scheme_id}")
 async def delete_scheme(
     scheme_id: int,
-    admin_user = Depends(verify_admin),
+    current_user = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     """Delete a scheme (admin only)"""
@@ -897,4 +994,42 @@ async def delete_scheme(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete scheme: {str(e)}"
+        )
+
+# ✅ Make a user admin
+@router.post("/users/{user_id}/promote")
+async def promote_to_admin(
+    user_id: int,
+    current_user = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Promote a user to admin role"""
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        if user.role == UserRole.ADMIN:
+            raise HTTPException(status_code=400, detail="User is already admin")
+        
+        user.role = UserRole.ADMIN
+        db.commit()
+        db.refresh(user)
+        
+        return {
+            "success": True,
+            "message": f"User {user.full_name} promoted to admin",
+            "user": {
+                "id": user.id,
+                "name": user.full_name,
+                "mobile": user.mobile_number,
+                "role": user.role.value
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to promote user: {str(e)}"
         )
