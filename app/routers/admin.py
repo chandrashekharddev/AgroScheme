@@ -167,6 +167,94 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
             detail=f"Failed to fetch dashboard stats: {str(e)}"
         )
 
+@router.post("/applications")
+async def create_application(
+    scheme_id: int,
+    farmer_id: Optional[str] = None,
+    farmer_name: Optional[str] = None,
+    applied_amount: float = 0,
+    db: Session = Depends(get_db)
+):
+    """Submit a new application (PUBLIC)"""
+    try:
+        # Get user by farmer_id or find by name
+        user = None
+        if farmer_id:
+            user = db.query(User).filter(User.farmer_id == farmer_id).first()
+        elif farmer_name:
+            user = db.query(User).filter(User.full_name.ilike(f"%{farmer_name}%")).first()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Farmer not found"
+            )
+        
+        # Get scheme
+        scheme = get_scheme_by_id(db, scheme_id)
+        if not scheme:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Scheme not found"
+            )
+        
+        # Generate application ID
+        app_count = db.query(func.count(Application.id)).filter(
+            extract('year', Application.applied_at) == datetime.utcnow().year
+        ).scalar() or 0
+        
+        application_id = f"APP{datetime.utcnow().year}{str(app_count + 1).zfill(5)}"
+        
+        # Create application
+        new_application = Application(
+            application_id=application_id,
+            user_id=user.id,
+            scheme_id=scheme.id,
+            applied_amount=applied_amount,
+            status="pending",
+            application_data={
+                "farmer_id": user.farmer_id,
+                "farmer_name": user.full_name,
+                "scheme_name": scheme.scheme_name,
+                "scheme_code": scheme.scheme_code,
+                "applied_at": datetime.utcnow().isoformat(),
+                "applied_via": "farmer_portal"
+            }
+        )
+        
+        db.add(new_application)
+        db.commit()
+        db.refresh(new_application)
+        
+        # Create notification for admin
+        notification = Notification(
+            title="New Application Submitted",
+            message=f"{user.full_name} applied for {scheme.scheme_name}",
+            notification_type="application",
+            user_id=user.id
+        )
+        db.add(notification)
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Application submitted successfully",
+            "application_id": application_id,
+            "farmer_name": user.full_name,
+            "scheme_name": scheme.scheme_name,
+            "applied_amount": applied_amount,
+            "status": "pending"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to submit application: {str(e)}"
+        )
+        
 # ✅ Add a new government scheme (PUBLIC)
 @router.post("/schemes", response_model=SchemeResponse)
 async def add_scheme(scheme: SchemeCreate, db: Session = Depends(get_db)):
