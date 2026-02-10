@@ -1,33 +1,21 @@
-# app/main.py - ADD DEBUG LOGGING
 import os
 from pathlib import Path
-
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
-# Imports
-from app.database import engine, Base
 from app.config import settings
-from app.routers import auth, farmers, schemes, documents, admin
+from app.database import get_db, Base, engine
 
-os.makedirs("uploads", exist_ok=True)
-# Create tables
-Base.metadata.create_all(bind=engine)
-
+# Create app FIRST - don't import routers yet
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.PROJECT_VERSION,
     description="AgroScheme AI - AI-powered platform for farmers"
 )
 
-# ✅ PRINT CORS INFO FOR DEBUGGING
-print("=" * 50)
-print("CORS Configuration:")
-print(f"Allowed Origins: {settings.ALLOWED_ORIGINS}")
-print(f"Request Origin (from env): {os.getenv('REQUEST_ORIGIN', 'Not set')}")
-print("=" * 50)
-
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
@@ -36,51 +24,97 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Create uploads directory
+uploads_dir = Path("uploads")
+uploads_dir.mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-# Uploads directory (for SQLite only)
-if "sqlite" in settings.DATABASE_URL:
-    uploads_dir = Path(settings.UPLOAD_DIR)
-    uploads_dir.mkdir(exist_ok=True)
-    app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
-else:
-    print("⚠️ PostgreSQL: uploads/ not mounted")
 
-# Include routers
-app.include_router(auth.router, tags=["Authentication"])
-app.include_router(farmers.router, tags=["Farmers"])
-app.include_router(schemes.router, tags=["Schemes"])
-app.include_router(documents.router, tags=["Documents"])
-app.include_router(admin.router, tags=["Admin"])
+# Store initialization state
+app.state.database_initialized = False
+app.state.database_engine = engine
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize application on startup"""
+    print("=" * 50)
+    print(f"🚀 Starting {settings.PROJECT_NAME} v{settings.PROJECT_VERSION}")
+    print(f"📊 Database: {'PostgreSQL (Supabase)' if 'postgresql' in settings.DATABASE_URL else 'SQLite'}")
+    print("=" * 50)
+    
+    try:
+        # Test database connection
+        with engine.connect() as conn:
+            conn.execute("SELECT 1")
+        
+        # Create tables if they don't exist
+        Base.metadata.create_all(bind=engine)
+        
+        app.state.database_initialized = True
+        print("✅ Database connected and tables created")
+        
+    except Exception as e:
+        print(f"⚠️ Database initialization failed: {str(e)}")
+        print("⚠️ Some database features may not work")
+        app.state.database_initialized = False
+    
+    # Now import and include routers (AFTER app is created)
+    from app.routers import auth, farmers, schemes, documents, admin
+    
+    app.include_router(auth.router, tags=["Authentication"])
+    app.include_router(farmers.router, tags=["Farmers"])
+    app.include_router(schemes.router, tags=["Schemes"])
+    app.include_router(documents.router, tags=["Documents"])
+    app.include_router(admin.router, tags=["Admin"])
+    
+    print("✅ All routers loaded successfully")
+    print("✅ API ready to accept requests")
 
 @app.get("/")
 async def root():
     return {
         "message": "AgroScheme AI API",
         "version": settings.PROJECT_VERSION,
+        "status": "running",
+        "database": "connected" if app.state.database_initialized else "disconnected",
         "docs": "/docs",
-        "health": "/health",
-        "cors_enabled": True,
-        "allowed_origins": settings.ALLOWED_ORIGINS[:3]  # Show first 3 for brevity
+        "health": "/health"
     }
 
 @app.get("/health")
-async def health_check():
-    return {"status": "healthy", "service": "agroscheme-api"}
+async def health_check(db: Session = Depends(get_db)):
+    """Health check with database connection test"""
+    try:
+        # Test database connection
+        db.execute("SELECT 1")
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "service": "agroscheme-api"
+        }
+    except Exception:
+        return {
+            "status": "degraded",
+            "database": "disconnected",
+            "service": "agroscheme-api"
+        }
 
 @app.get("/test")
 async def test():
     return {"message": "API working"}
 
-# ✅ Add a CORS test endpoint
-@app.get("/cors-test")
-async def cors_test():
+@app.get("/debug")
+async def debug():
+    """Debug endpoint"""
     return {
-        "message": "CORS test successful",
-        "allowed_origins": settings.ALLOWED_ORIGINS,
-        "timestamp": "now"
+        "app": settings.PROJECT_NAME,
+        "version": settings.PROJECT_VERSION,
+        "database_initialized": app.state.database_initialized,
+        "database_type": "PostgreSQL" if "postgresql" in settings.DATABASE_URL else "SQLite",
+        "cors_enabled": True,
+        "environment": "production"
     }
 
-# ✅ Handle OPTIONS requests for all endpoints
+# Handle OPTIONS requests
 @app.options("/{path:path}")
 async def options_handler():
     return {"message": "CORS preflight OK"}
