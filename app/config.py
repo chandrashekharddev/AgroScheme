@@ -1,3 +1,4 @@
+# app/config.py
 import os
 from dotenv import load_dotenv
 
@@ -21,20 +22,19 @@ class Settings:
             else:
                 DATABASE_URL += "?sslmode=require"
     
-    # CORS Configuration - SIMPLE VERSION
+    # ✅ FIXED: CORS Configuration - SPECIFIC ORIGINS, NOT WILDCARDS
     ALLOWED_ORIGINS = [
-        # Your Vercel frontend
+        # Your Vercel frontend - EXACT URL
         "https://agroscheme-backend-2.vercel.app",
-        
-        # All Vercel deployments
-        "https://*.vercel.app",
         
         # Your Render backend
         "https://agroscheme-6.onrender.com",
         
         # Local development
-        "http://localhost:*",
-        "http://127.0.0.1:*",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
     ]
     
     # JWT Configuration
