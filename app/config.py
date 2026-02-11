@@ -1,6 +1,7 @@
 # app/config.py
 import os
 from dotenv import load_dotenv
+from typing import List
 
 load_dotenv()
 
@@ -8,23 +9,21 @@ class Settings:
     PROJECT_NAME = "AgroScheme AI"
     PROJECT_VERSION = "1.0.0"
     
-    # Database Configuration
-    DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./agroscheme.db")
+    # ✅ Your Supabase Configuration
+    SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")
+    SUPABASE_KEY = os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY", "")
+    SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")  # You need to add this
     
-    # Fix common PostgreSQL issues
-    if DATABASE_URL:
-        if DATABASE_URL.startswith("postgres://"):
-            DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-        
-        if "postgresql" in DATABASE_URL and "sslmode=" not in DATABASE_URL:
-            if "?" in DATABASE_URL:
-                DATABASE_URL += "&sslmode=require"
-            else:
-                DATABASE_URL += "?sslmode=require"
+    # ✅ Your Database URL
+    DATABASE_URL = os.getenv("DATABASE_URL", "")
     
-    # ✅ FIXED: CORS Configuration - SPECIFIC ORIGINS, NOT WILDCARDS
-    ALLOWED_ORIGINS = [
-        # Your Vercel frontend - EXACT URL
+    # Fix PostgreSQL URL
+    if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    
+    # ✅ CRITICAL: CORS Configuration - EXACT origins that work
+    ALLOWED_ORIGINS: List[str] = [
+        # Your Vercel frontend - EXACT match
         "https://agroscheme-backend-2.vercel.app",
         
         # Your Render backend
@@ -37,10 +36,10 @@ class Settings:
         "http://127.0.0.1:8000",
     ]
     
-    # JWT Configuration
+    # ✅ JWT Configuration
     SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
     ALGORITHM = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days
     
     # File Upload Configuration
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
