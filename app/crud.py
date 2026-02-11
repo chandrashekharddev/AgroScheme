@@ -181,12 +181,29 @@ def get_scheme_by_id(db: Session, scheme_id: int) -> Optional[GovernmentScheme]:
 def get_scheme_by_code(db: Session, scheme_code: str) -> Optional[GovernmentScheme]:
     return db.query(GovernmentScheme).filter(GovernmentScheme.scheme_code == scheme_code).first()
 
-def get_all_schemes(db: Session, skip: int = 0, limit: int = 100, active_only: bool = True) -> List[GovernmentScheme]:
-    query = db.query(GovernmentScheme)
-    if active_only:
-        query = query.filter(GovernmentScheme.is_active == True)
-    return query.offset(skip).limit(limit).all()
-
+# app/crud.py - Update get_all_schemes
+def get_all_schemes(db: Session, skip: int = 0, limit: int = 100, active_only: bool = False):
+    """Get all government schemes with error handling"""
+    try:
+        query = db.query(GovernmentScheme)
+        if active_only:
+            query = query.filter(GovernmentScheme.is_active == True)
+        
+        schemes = query.offset(skip).limit(limit).all()
+        
+        # ✅ Fix: Convert enum values to strings safely
+        for scheme in schemes:
+            if hasattr(scheme, 'scheme_type') and scheme.scheme_type:
+                # Ensure scheme_type is a string
+                if hasattr(scheme.scheme_type, 'value'):
+                    scheme.scheme_type = scheme.scheme_type.value
+                else:
+                    scheme.scheme_type = str(scheme.scheme_type).lower()
+        
+        return schemes
+    except Exception as e:
+        print(f"❌ Error in get_all_schemes: {e}")
+        return []
 def create_application(db: Session, user_id: int, scheme_id: int, application_data: Dict[str, Any]) -> Application:
     scheme = get_scheme_by_id(db, scheme_id)
     if not scheme:
