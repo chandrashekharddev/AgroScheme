@@ -11,7 +11,7 @@ from datetime import datetime
 from app.config import settings
 from app.database import get_db, Base, engine
 
-# Create app FIRST
+# Create app
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.PROJECT_VERSION,
@@ -21,15 +21,13 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
-# CORS Middleware - UPDATED WITH COMPLETE CONFIGURATION
-# CORS Middleware
+# CORS Middleware - SIMPLIFIED
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 # Create uploads directory
@@ -41,37 +39,16 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 app.state.database_initialized = False
 app.state.database_engine = engine
 
-# Custom middleware for CORS headers
-@app.middleware("http")
-async def add_cors_headers(request: Request, call_next):
-    response = await call_next(request)
-    
-    # Add CORS headers to all responses
-    origin = request.headers.get("origin")
-    
-    if origin and origin in settings.ALLOWED_ORIGINS:
-        response.headers["Access-Control-Allow-Origin"] = origin
-    elif "*" in settings.ALLOWED_ORIGINS:
-        response.headers["Access-Control-Allow-Origin"] = "*"
-    
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = ", ".join(settings.ALLOW_METHODS)
-    response.headers["Access-Control-Allow-Headers"] = ", ".join(settings.ALLOW_HEADERS)
-    response.headers["Access-Control-Expose-Headers"] = "*"
-    
-    return response
-
 @app.on_event("startup")
 async def startup_event():
     """Initialize application on startup"""
     print("=" * 50)
     print(f"🚀 Starting {settings.PROJECT_NAME} v{settings.PROJECT_VERSION}")
-    print(f"📊 Database: {settings.database_type}")
-    print(f"🌐 Allowed Origins: {len(settings.ALLOWED_ORIGINS)} origins configured")
+    print(f"🌐 CORS Origins: {settings.ALLOWED_ORIGINS}")
     print("=" * 50)
     
     try:
-        # Test database connection WITH text()
+        # Test database connection
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         
@@ -86,7 +63,7 @@ async def startup_event():
         print("⚠️ Some database features may not work")
         app.state.database_initialized = False
     
-    # Now import and include routers
+    # Import and include routers
     from app.routers import auth, farmers, schemes, documents, admin
     
     app.include_router(auth.router, tags=["Authentication"])
@@ -139,39 +116,19 @@ async def cors_test(request: Request):
         "message": "CORS test endpoint",
         "origin_received": origin,
         "origin_allowed": origin in settings.ALLOWED_ORIGINS,
-        "allowed_origins_count": len(settings.ALLOWED_ORIGINS),
-        "timestamp": datetime.utcnow().isoformat(),
-        "headers_received": dict(request.headers)
-    }
-
-@app.get("/debug")
-async def debug():
-    """Debug endpoint"""
-    return {
-        "app": settings.PROJECT_NAME,
-        "version": settings.PROJECT_VERSION,
-        "database_initialized": app.state.database_initialized,
-        "database_type": settings.database_type,
-        "cors_enabled": True,
         "allowed_origins": settings.ALLOWED_ORIGINS,
-        "environment": "production",
         "timestamp": datetime.utcnow().isoformat()
     }
 
 @app.options("/{full_path:path}")
-async def preflight_handler(full_path: str):
+async def preflight_handler():
     """Handle OPTIONS requests for all endpoints"""
     return JSONResponse(
         content={"message": "Preflight request successful"},
         headers={
             "Access-Control-Allow-Origin": ", ".join(settings.ALLOWED_ORIGINS),
-            "Access-Control-Allow-Methods": ", ".join(settings.ALLOW_METHODS),
-            "Access-Control-Allow-Headers": ", ".join(settings.ALLOW_HEADERS),
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Max-Age": "600"
         }
     )
-
-@app.get("/test")
-async def test():
-    return {"message": "API working", "timestamp": datetime.utcnow().isoformat()}
