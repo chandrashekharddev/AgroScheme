@@ -182,34 +182,62 @@ def get_scheme_by_code(db: Session, scheme_code: str) -> Optional[GovernmentSche
     return db.query(GovernmentScheme).filter(GovernmentScheme.scheme_code == scheme_code).first()
 
 def get_all_schemes(db: Session, skip: int = 0, limit: int = 100, active_only: bool = False):
-    """Get all government schemes with error handling"""
+    """Get all government schemes from database - ULTIMATE FIXED VERSION"""
     try:
-        print(f"🔍 get_all_schemes called with active_only={active_only}")
+        print("=" * 60)
+        print("🔍 get_all_schemes: STARTING")
+        print(f"   Params: skip={skip}, limit={limit}, active_only={active_only}")
         
-        # Build query
+        # DIRECT QUERY - NO FILTERS FIRST TO SEE WHAT'S IN DB
+        all_schemes = db.query(GovernmentScheme).all()
+        print(f"📊 TOTAL SCHEMES IN DATABASE: {len(all_schemes)}")
+        
+        if len(all_schemes) == 0:
+            print("❌ NO SCHEMES FOUND IN DATABASE AT ALL!")
+            return []
+        
+        # Log all schemes for debugging
+        for i, s in enumerate(all_schemes):
+            print(f"  DB Scheme {i+1}: ID={s.id}, Code={s.scheme_code}, Name={s.scheme_name}, Active={s.is_active}")
+        
+        # Now build query with filters
         query = db.query(GovernmentScheme)
+        
         if active_only:
+            print("✅ Applying active_only filter (is_active = True)")
             query = query.filter(GovernmentScheme.is_active == True)
-            print(f"✅ Applied active_only filter")
         
-        # Get count first
-        total_count = query.count()
-        print(f"📊 Total schemes matching query: {total_count}")
-        
-        # Get paginated results
+        # Apply pagination
         schemes = query.offset(skip).limit(limit).all()
-        print(f"📦 Retrieved {len(schemes)} schemes after pagination")
+        print(f"📦 After filters & pagination: {len(schemes)} schemes")
         
-        # Log each scheme found
-        for i, scheme in enumerate(schemes):
-            print(f"  Scheme {i+1}: ID={scheme.id}, Code={scheme.scheme_code}, Name={scheme.scheme_name}, Active={scheme.is_active}")
+        if len(schemes) == 0:
+            # If no schemes after filter, maybe is_active is NULL or False
+            print("⚠️ No schemes after active_only filter. Checking for NULL values...")
+            
+            # Check if any schemes have NULL is_active
+            null_active = db.query(GovernmentScheme).filter(GovernmentScheme.is_active == None).count()
+            print(f"   Schemes with is_active = NULL: {null_active}")
+            
+            if null_active > 0:
+                # Update NULL values to TRUE
+                print("✅ Fixing NULL is_active values...")
+                db.query(GovernmentScheme).filter(GovernmentScheme.is_active == None).update(
+                    {GovernmentScheme.is_active: True}
+                )
+                db.commit()
+                
+                # Try query again
+                query = db.query(GovernmentScheme)
+                if active_only:
+                    query = query.filter(GovernmentScheme.is_active == True)
+                schemes = query.offset(skip).limit(limit).all()
+                print(f"📦 After fixing NULLs: {len(schemes)} schemes")
         
-        # DON'T modify the original objects - create new dicts instead
-        # This is just for logging, not modification
         return schemes
         
     except Exception as e:
-        print(f"❌ Error in get_all_schemes: {e}")
+        print(f"❌ CRITICAL ERROR in get_all_schemes: {e}")
         import traceback
         traceback.print_exc()
         return []
