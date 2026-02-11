@@ -9,8 +9,18 @@ from app.schemas import UserCreate, UserUpdate, SchemeCreate, DocumentCreate
 from app.utils.security import get_password_hash, verify_password
 from app.utils.helpers import generate_farmer_id, generate_application_id, calculate_eligibility
 
-def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
-    return db.query(User).filter(User.id == user_id).first()
+def get_user_by_id(db: Session, user_id: int):
+    """Get user by ID with error handling"""
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            print(f"✅ Found user: {user.full_name} (ID: {user.id}, Farmer ID: {user.farmer_id})")
+        else:
+            print(f"❌ No user found with ID: {user_id}")
+        return user
+    except Exception as e:
+        print(f"❌ Error in get_user_by_id: {str(e)}")
+        return None()
 
 def get_user_by_mobile(db: Session, mobile_number: str) -> Optional[User]:
     return db.query(User).filter(User.mobile_number == mobile_number).first()
