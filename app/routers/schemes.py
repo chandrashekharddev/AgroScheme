@@ -14,6 +14,7 @@ from app.utils.auth_utils import get_current_user  # ✅ Use auth_utils
 
 router = APIRouter(prefix="/schemes", tags=["schemes"])
 
+# app/routers/schemes.py - Update the get_schemes function
 @router.get("/")
 async def get_schemes(
     request: Request,
@@ -41,12 +42,20 @@ async def get_schemes(
         
         result = []
         for scheme in schemes:
+            # ✅ FIX: Handle scheme_type safely
+            scheme_type = "central"  # default
+            if scheme.scheme_type:
+                if hasattr(scheme.scheme_type, 'value'):
+                    scheme_type = scheme.scheme_type.value
+                else:
+                    scheme_type = str(scheme.scheme_type).lower()
+            
             result.append({
                 "id": scheme.id,
                 "scheme_name": scheme.scheme_name,
                 "scheme_code": scheme.scheme_code,
                 "description": scheme.description,
-                "scheme_type": scheme.scheme_type.value if hasattr(scheme.scheme_type, 'value') else scheme.scheme_type,
+                "scheme_type": scheme_type,  # ✅ Always lowercase
                 "benefit_amount": scheme.benefit_amount,
                 "last_date": scheme.last_date.isoformat() if scheme.last_date else None,
                 "is_active": scheme.is_active,
