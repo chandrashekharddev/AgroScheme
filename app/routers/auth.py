@@ -12,10 +12,8 @@ from app.utils.security import create_access_token
 from app.config import settings
 from app.supabase_client import get_supabase_client
 
-# ✅ FIX: Use prefix="/auth" here, and DO NOT add prefix in main.py
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
-# app/routers/auth.py - Update the login function
 @router.post("/login")
 async def login(request: Request, form_data: UserLogin, db: Session = Depends(get_db)):
     """
@@ -67,13 +65,13 @@ async def login(request: Request, form_data: UserLogin, db: Session = Depends(ge
             "main_crops": getattr(user, 'main_crops', None),
             "bank_account_number": getattr(user, 'bank_account_number', None),
             "ifsc_code": getattr(user, 'ifsc_code', None),
-            # ✅ Safely handle aadhaar_number - it might not exist in DB
             "aadhaar_number": getattr(user, 'aadhaar_number', None),
             "pan_number": getattr(user, 'pan_number', None),
             "language": getattr(user, 'language', 'en'),
             "auto_apply_enabled": getattr(user, 'auto_apply_enabled', True),
             "email_notifications": getattr(user, 'email_notifications', True),
-            "sms_notifications": getattr(user, 'sms_notifications', True)
+            "sms_notifications": getattr(user, 'sms_notifications', True),
+            "created_at": user.created_at.isoformat() if user.created_at else None
         }
         
         response_data = {
@@ -85,7 +83,7 @@ async def login(request: Request, form_data: UserLogin, db: Session = Depends(ge
         
         response = JSONResponse(content=response_data)
         
-        # Set CORS headers
+        # ✅ Set CORS headers
         if origin:
             if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
                 response.headers["Access-Control-Allow-Origin"] = origin
@@ -130,32 +128,7 @@ async def register(user: UserCreate, db: Session = Depends(get_db)):
                     detail="Email already registered"
                 )
         
-        # Create user in Supabase Auth
-        try:
-            supabase = get_supabase_client()
-            auth_response = supabase.auth.sign_up({
-                "email": user.email or f"{user.mobile_number}@agroscheme.com",
-                "password": user.password,
-                "phone": user.mobile_number,
-                "options": {
-                    "data": {
-                        "full_name": user.full_name,
-                        "role": "farmer"
-                    }
-                }
-            })
-            
-            # Set user.id from Supabase Auth
-            if hasattr(user, 'id'):
-                user.id = auth_response.user.id
-                
-            print(f"✅ Supabase Auth user created: {auth_response.user.id}")
-            
-        except Exception as supabase_error:
-            print(f"⚠️ Supabase Auth error: {supabase_error}")
-            # Continue with local DB creation
-        
-        # Create user in local database
+        # Create user in database
         new_user = create_user(db=db, user=user)
         print(f"✅ User registered successfully: {new_user.farmer_id}")
         
@@ -194,7 +167,6 @@ async def login_with_otp(
                 detail="User not found"
             )
         
-        # In production, verify OTP here
         # For demo, any 6-digit OTP works
         if otp and len(otp) != 6:
             raise HTTPException(
@@ -249,90 +221,14 @@ async def send_otp(request: Request, mobile_number: str):
     """
     Send OTP to mobile number (Demo)
     """
-    try:
-        origin = request.headers.get("origin", "")
-        print(f"📱 OTP requested for: {mobile_number}")
-        
-        response = JSONResponse({
-            "success": True,
-            "message": "OTP sent successfully",
-            "otp": "123456",  # Demo OTP
-            "mobile": mobile_number
-        })
-        
-        # Set CORS headers
-        if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-        
-        return response
-        
-    except Exception as e:
-        print(f"❌ Send OTP error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to send OTP: {str(e)}"
-        )
-
-@router.get("/me")
-async def get_current_user(
-    request: Request,
-    token: str = Depends(create_access_token),  # You need to implement token validation
-    db: Session = Depends(get_db)
-):
-    """
-    Get current authenticated user
-    """
-    try:
-        origin = request.headers.get("origin", "")
-        
-        # Decode token and get user
-        # This is a placeholder - implement proper token validation
-        user_id = 1  # Get from token
-        
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        response = JSONResponse({
-            "success": True,
-            "user": {
-                "id": user.id,
-                "farmer_id": user.farmer_id,
-                "full_name": user.full_name,
-                "mobile_number": user.mobile_number,
-                "email": user.email,
-                "role": user.role.value if hasattr(user.role, 'value') else user.role
-            }
-        })
-        
-        # Set CORS headers
-        if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
-        
-        return response
-        
-    except Exception as e:
-        print(f"❌ Get user error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication credentials"
-        )
-
-@router.post("/logout")
-async def logout(request: Request):
-    """
-    Logout user
-    """
     origin = request.headers.get("origin", "")
+    print(f"📱 OTP requested for: {mobile_number}")
     
     response = JSONResponse({
         "success": True,
-        "message": "Logged out successfully"
+        "message": "OTP sent successfully",
+        "otp": "123456",  # Demo OTP
+        "mobile": mobile_number
     })
     
     # Set CORS headers
