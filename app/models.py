@@ -1,3 +1,4 @@
+# app/models.py - COMPLETE FIXED VERSION
 from sqlalchemy import Column, Integer, String, Boolean, Float, DateTime, Text, ForeignKey, JSON, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -24,14 +25,14 @@ class ApplicationStatus(str, enum.Enum):
     REJECTED = "rejected"
     DOCS_NEEDED = "docs_needed"
 
-# app/models.py - Make SchemeType case-insensitive
+# ✅ FIXED: SchemeType enum values now match database (lowercase)
 class SchemeType(str, enum.Enum):
-    CENTRAL = "CENTRAL"
-    STATE = "STATE"
+    CENTRAL = "central"  # ✅ Changed from "CENTRAL" to "central"
+    STATE = "state"      # ✅ Changed from "STATE" to "state"
     
     @classmethod
     def _missing_(cls, value):
-        """Make enum case-insensitive"""
+        """Make enum case-insensitive (fallback)"""
         if isinstance(value, str):
             value = value.lower()
             for member in cls:
@@ -41,6 +42,7 @@ class SchemeType(str, enum.Enum):
 
 class User(Base):
     __tablename__ = "users"
+    
     id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String(100), nullable=False)
     mobile_number = Column(String(10), unique=True, index=True, nullable=False)
@@ -63,14 +65,19 @@ class User(Base):
     auto_apply_enabled = Column(Boolean, default=True)
     email_notifications = Column(Boolean, default=True)
     sms_notifications = Column(Boolean, default=True)
+    aadhaar_number = Column(String(12), nullable=True)
+    pan_number = Column(String(10), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
-    documents = relationship("Document", back_populates="user")
-    applications = relationship("Application", back_populates="user")
-    notifications = relationship("Notification", back_populates="user")
+    
+    # Relationships
+    documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
+    applications = relationship("Application", back_populates="user", cascade="all, delete-orphan")
+    notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
 
 class Document(Base):
     __tablename__ = "documents"
+    
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     document_type = Column(Enum(DocumentType), nullable=False)
@@ -81,26 +88,35 @@ class Document(Base):
     verified = Column(Boolean, default=False)
     verification_date = Column(DateTime(timezone=True))
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
     user = relationship("User", back_populates="documents")
 
 class GovernmentScheme(Base):
     __tablename__ = "government_schemes"
+    
     id = Column(Integer, primary_key=True, index=True)
     scheme_name = Column(String(200), nullable=False)
     scheme_code = Column(String(50), unique=True, index=True)
     description = Column(Text)
+    # ✅ FIXED: Now accepts "central" and "state" from database
     scheme_type = Column(Enum(SchemeType), nullable=False)
     benefit_amount = Column(String(100))
     last_date = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
+    department = Column(String(100), default="Agriculture")
     eligibility_criteria = Column(JSON, nullable=False)
     required_documents = Column(JSON, nullable=False)
     created_by = Column(String(100))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
+    applications = relationship("Application", back_populates="scheme", cascade="all, delete-orphan")
 
 class Application(Base):
     __tablename__ = "applications"
+    
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     scheme_id = Column(Integer, ForeignKey("government_schemes.id"), nullable=False)
@@ -113,11 +129,14 @@ class Application(Base):
     status_history = Column(JSON)
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships
     user = relationship("User", back_populates="applications")
-    scheme = relationship("GovernmentScheme")
+    scheme = relationship("GovernmentScheme", back_populates="applications")
 
 class Notification(Base):
     __tablename__ = "notifications"
+    
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     title = Column(String(200), nullable=False)
@@ -127,4 +146,6 @@ class Notification(Base):
     related_application_id = Column(Integer, ForeignKey("applications.id"))
     read = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    # Relationships
     user = relationship("User", back_populates="notifications")
