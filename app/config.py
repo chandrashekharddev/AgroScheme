@@ -23,13 +23,10 @@ class Settings:
     
     # CORS Configuration - FIXED
     ALLOWED_ORIGINS = [
-        # Your Vercel frontend - VERY IMPORTANT
+        # Your Vercel frontend
         "https://agroscheme-backend-2.vercel.app",
         
-        # For future Vercel deployments
-        "https://agroscheme-backend-*.vercel.app",
-        "https://agroscheme-ai.vercel.app",
-        "https://agroscheme.vercel.app",
+        # For Vercel deployments
         "https://*.vercel.app",
         
         # Your Render backend
