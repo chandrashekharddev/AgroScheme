@@ -44,6 +44,47 @@ class Settings:
         else:
             return "Unknown"
     
+    # CORS Configuration - UPDATED WITH YOUR VERCEL DOMAINS
+    ALLOWED_ORIGINS = [
+        # Local development
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+        "http://localhost:8000",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "http://localhost:3001",
+        
+        # Production frontends
+        "https://agroscheme-ai.vercel.app",
+        "https://agroscheme.vercel.app",
+        "https://agroscheme-backend.vercel.app",
+        "https://agroscheme-backend-2.vercel.app",  # Your frontend domain
+        
+        # Render backend
+        "https://agroscheme-6.onrender.com",
+        
+        # Wildcards for preview deployments
+        "https://*.vercel.app",
+        "https://*.onrender.com",
+        "http://*.localhost",  # For local testing with subdomains
+    ]
+    
+    # Additional CORS settings
+    ALLOW_CREDENTIALS = True
+    ALLOW_METHODS = ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
+    ALLOW_HEADERS = [
+        "*",
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "Access-Control-Allow-Headers",
+        "Access-Control-Request-Method",
+        "Access-Control-Request-Headers",
+    ]
+    
     # JWT Configuration
     SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
     ALGORITHM = "HS256"
@@ -53,38 +94,5 @@ class Settings:
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
     ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
-    
-    # CORS Configuration
-    ALLOWED_ORIGINS = [
-        # Local development
-        "http://localhost:5500",
-        "http://127.0.0.1:5500",
-        "http://localhost:8000",
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:8080",
-        
-        # Production frontends
-        "https://agroscheme-ai.vercel.app",
-        "https://agroscheme.vercel.app",
-        "https://agroscheme-backend.vercel.app",
-        
-        # Render backend
-        "https://agroscheme-6.onrender.com",
-        
-        # Wildcards for preview deployments
-        "https://*.vercel.app",
-        "https://*.onrender.com",
-    ]
 
 settings = Settings()
-
-# Debug output to verify settings
-if __name__ == "__main__":
-    print(f"🔧 Settings Verification:")
-    print(f"   Project: {settings.PROJECT_NAME} v{settings.PROJECT_VERSION}")
-    print(f"   Database Type: {settings.database_type}")
-    print(f"   Database URL (safe): {settings.safe_database_url}")
-    print(f"   Upload Directory: {settings.UPLOAD_DIR}")
-    print(f"   Max File Size: {settings.MAX_FILE_SIZE / (1024*1024)}MB")
-    print(f"   JWT Expiry: {settings.ACCESS_TOKEN_EXPIRE_MINUTES} minutes")
