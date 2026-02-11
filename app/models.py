@@ -24,9 +24,20 @@ class ApplicationStatus(str, enum.Enum):
     REJECTED = "rejected"
     DOCS_NEEDED = "docs_needed"
 
+# app/models.py - Make SchemeType case-insensitive
 class SchemeType(str, enum.Enum):
     CENTRAL = "central"
     STATE = "state"
+    
+    @classmethod
+    def _missing_(cls, value):
+        """Make enum case-insensitive"""
+        if isinstance(value, str):
+            value = value.lower()
+            for member in cls:
+                if member.value == value:
+                    return member
+        return None
 
 class User(Base):
     __tablename__ = "users"
