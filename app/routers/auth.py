@@ -1,140 +1,75 @@
-# app/routers/auth.py - CORRECTED VERSION
-from fastapi import APIRouter, Depends, HTTPException, status
+# app/routers/auth.py - UPDATED WITH CORS FIX
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from datetime import timedelta
+from typing import Optional
 
-# ✅ CORRECT IMPORTS - ADD "app." prefix
 from app.database import get_db
 from app.schemas import UserCreate, UserResponse, Token, UserLogin
-from app.crud import create_user, authenticate_user, get_user_by_mobile, get_user_by_email
+from app.crud import create_user, authenticate_user, get_user_by_mobile
 from app.utils.security import create_access_token
 from app.config import settings
+from app.supabase_client import get_supabase_client
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
-@router.post("/register", response_model=UserResponse)
-async def register(user: UserCreate, db: Session = Depends(get_db)):
-    # Check if user already exists
-    db_user = get_user_by_mobile(db, mobile_number=user.mobile_number)
-    if db_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Mobile number already registered"
-        )
-    
-    # Check email if provided
-    if user.email:
-        db_user_email = get_user_by_email(db, email=user.email)
-        if db_user_email:
+@router.post("/login")
+async def login(request: Request, form_data: UserLogin, db: Session = Depends(get_db)):
+    try:
+        origin = request.headers.get("origin", "")
+        print(f"🔐 Login attempt from: {origin}")
+        print(f"📱 Mobile: {form_data.mobile_number}")
+        
+        # Authenticate user
+        user = authenticate_user(db, form_data.mobile_number, form_data.password)
+        if not user:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect mobile number or password",
             )
-    
-    # Create user
-    return create_user(db=db, user=user)
-
-# @router.post("/login", response_model=Token)
-# async def login(form_data: UserLogin, db: Session = Depends(get_db)):
-#     user = authenticate_user(db, form_data.mobile_number, form_data.password)
-#     if not user:
-#         raise HTTPException(
-#             status_code=status.HTTP_401_UNAUTHORIZED,
-#             detail="Incorrect mobile number or password",
-#             headers={"WWW-Authenticate": "Bearer"},
-#         )
-    
-#     # Create access token
-#     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-#     access_token = create_access_token(
-#         data={"sub": str(user.id), "role": user.role},
-#         expires_delta=access_token_expires
-#     )
-    
-#     return {
-#         "access_token": access_token,
-#         "token_type": "bearer",
-#         "user": user
-#     }
-
-# @router.post("/login-with-otp", response_model=Token)
-# async def login_with_otp(mobile_number: str, db: Session = Depends(get_db)):
-#     user = get_user_by_mobile(db, mobile_number)
-#     if not user:
-#         raise HTTPException(
-#             status_code=status.HTTP_404_NOT_FOUND,
-#             detail="User not found"
-#         )
-    
-#     # Create access token
-#     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-#     access_token = create_access_token(
-#         data={"sub": str(user.id), "role": user.role},
-#         expires_delta=access_token_expires
-#     )
-    
-#     return {
-#         "access_token": access_token,
-#         "token_type": "bearer",
-#         "user": user
-#     }
-# In app/routers/auth.py - UPDATE THE LOGIN FUNCTIONS:
-
-@router.post("/login", response_model=Token)
-async def login(form_data: UserLogin, db: Session = Depends(get_db)):
-    user = authenticate_user(db, form_data.mobile_number, form_data.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect mobile number or password",
-            headers={"WWW-Authenticate": "Bearer"},
+        
+        # Create access token
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(
+            data={
+                "sub": str(user.id),
+                "mobile": user.mobile_number,
+                "role": user.role.value if hasattr(user.role, 'value') else user.role
+            },
+            expires_delta=access_token_expires
         )
-    
-    # ✅ FIX: Convert Enum to string for token
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={
-            "sub": str(user.id), 
-            "role": user.role.value  # ← ADD .value to get string
-        },
-        expires_delta=access_token_expires
-    )
-    
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": user
-    }
-
-# ✅ DO THE SAME FOR login_with_otp:
-@router.post("/login-with-otp", response_model=Token)
-async def login_with_otp(mobile_number: str, db: Session = Depends(get_db)):
-    user = get_user_by_mobile(db, mobile_number)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
-    
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={
-            "sub": str(user.id), 
-            "role": user.role.value  # ← ADD .value
-        },
-        expires_delta=access_token_expires
-    )
-    
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": user
-    }
-    
-@router.post("/send-otp")
-async def send_otp(mobile_number: str):
-    return {
-        "success": True,
-        "message": "OTP sent successfully (demo: 123456)",
-        "otp": "123456"
-    }
+        
+        # Create response
+        response = JSONResponse({
+            "success": True,
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "farmer_id": user.farmer_id,
+                "full_name": user.full_name,
+                "mobile_number": user.mobile_number,
+                "email": user.email,
+                "role": user.role.value if hasattr(user.role, 'value') else user.role,
+                "state": user.state,
+                "district": user.district,
+                "village": user.village
+            }
+        })
+        
+        # ✅ CRITICAL: Set CORS headers for Vercel
+        if "vercel.app" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        elif origin in settings.ALLOWED_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"❌ Login error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Login failed: {str(e)}")
