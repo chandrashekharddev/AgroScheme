@@ -21,24 +21,20 @@ class Settings:
             else:
                 DATABASE_URL += "?sslmode=require"
     
-    # CORS Configuration - FIXED
+    # CORS Configuration - SIMPLE VERSION
     ALLOWED_ORIGINS = [
         # Your Vercel frontend
         "https://agroscheme-backend-2.vercel.app",
         
-        # For Vercel deployments
+        # All Vercel deployments
         "https://*.vercel.app",
         
         # Your Render backend
         "https://agroscheme-6.onrender.com",
         
         # Local development
-        "http://localhost:5500",
-        "http://127.0.0.1:5500",
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://localhost:8080",
-        "http://localhost:8000",
+        "http://localhost:*",
+        "http://127.0.0.1:*",
     ]
     
     # JWT Configuration
