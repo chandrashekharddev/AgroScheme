@@ -92,6 +92,7 @@ class Document(Base):
     # Relationships
     user = relationship("User", back_populates="documents")
 
+# app/models.py - CHANGE THIS:
 class GovernmentScheme(Base):
     __tablename__ = "government_schemes"
     
@@ -99,21 +100,18 @@ class GovernmentScheme(Base):
     scheme_name = Column(String(200), nullable=False)
     scheme_code = Column(String(50), unique=True, index=True)
     description = Column(Text)
-    # ✅ FIXED: Now accepts "central" and "state" from database
-    scheme_type = Column(Enum(SchemeType), nullable=False)
+    # ✅ FIX: Use String, NOT Enum (match your database schema)
+    scheme_type = Column(String(50), nullable=False, default="central")
     benefit_amount = Column(String(100))
     last_date = Column(DateTime(timezone=True))
     is_active = Column(Boolean, default=True)
     department = Column(String(100), default="Agriculture")
-    eligibility_criteria = Column(JSON, nullable=False)
-    required_documents = Column(JSON, nullable=False)
+    eligibility_criteria = Column(JSON, nullable=False, default={})
+    required_documents = Column(JSON, nullable=False, default=[])
     created_by = Column(String(100))
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
-    # Relationships
-    applications = relationship("Application", back_populates="scheme", cascade="all, delete-orphan")
-
 class Application(Base):
     __tablename__ = "applications"
     
