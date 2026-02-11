@@ -134,11 +134,12 @@ class DocumentResponse(DocumentBase):
     class Config:
         from_attributes = True
 
+# app/schemas.py
 class SchemeBase(BaseModel):
     scheme_name: str
     scheme_code: str
     description: str
-    scheme_type: SchemeType
+    scheme_type: str  # ✅ Simple string, not enum
     benefit_amount: Optional[str] = None
     last_date: Optional[datetime] = None
     is_active: bool = True
