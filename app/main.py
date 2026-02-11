@@ -99,13 +99,17 @@ async def startup_event():
     # Import and include routers
     from app.routers import auth, farmers, schemes, documents, admin
     
-    app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-    app.include_router(farmers.router, prefix="/farmers", tags=["Farmers"])
-    app.include_router(schemes.router, prefix="/schemes", tags=["Schemes"])
-    app.include_router(documents.router, prefix="/documents", tags=["Documents"])
-    app.include_router(admin.router, prefix="/admin", tags=["Admin"])
+    app.include_router(auth.router)  # NO PREFIX HERE
+    app.include_router(farmers.router, prefix="/farmers")
+    app.include_router(schemes.router, prefix="/schemes")
+    app.include_router(documents.router, prefix="/documents")
+    app.include_router(admin.router, prefix="/admin")
     
-    print("✅ All routers loaded successfully")
+     print("\n📋 Registered Routes:")
+    for route in app.routes:
+        if hasattr(route, 'methods'):
+            print(f"  {list(route.methods)} - {route.path}")
+    print("=" * 50)
 
 @app.get("/")
 async def root(request: Request):
