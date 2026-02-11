@@ -112,6 +112,7 @@ async def update_user_info(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# app/routers/farmers.py - Update get_dashboard_stats
 @router.get("/dashboard-stats")
 async def get_dashboard_stats(
     request: Request,
@@ -135,9 +136,13 @@ async def get_dashboard_stats(
         # Calculate total benefits
         total_benefits = sum(app.approved_amount or 0 for app in approved_apps)
         
-        # Get eligible schemes count
-        all_schemes = get_all_schemes(db, active_only=True)
-        eligible_count = min(len(all_schemes), 12)  # Simplified eligibility
+        # ✅ FIX: Get eligible schemes count safely
+        try:
+            all_schemes = get_all_schemes(db, active_only=True)
+            eligible_count = min(len(all_schemes), 12)
+        except Exception as e:
+            print(f"⚠️ Error getting schemes: {e}")
+            eligible_count = 0
         
         # Get documents
         documents = get_user_documents(db, current_user.id)
@@ -181,7 +186,6 @@ async def get_dashboard_stats(
                 "total_applications": 0
             }
         })
-
 @router.get("/applications")
 async def get_my_applications(
     request: Request,
