@@ -21,40 +21,54 @@ from app.config import settings
 
 router = APIRouter(prefix="/farmers", tags=["farmers"])
 
+# app/routers/farmers.py - Update the /me endpoint
 @router.get("/me")
 async def get_current_user_info(
     request: Request,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
     """Get current logged-in farmer's profile"""
     try:
         origin = request.headers.get("origin", "")
         
+        # ✅ FIX: Refresh user from database to get latest data
+        from app.crud import get_user_by_id
+        user = get_user_by_id(db, current_user.id)
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        print(f"📋 Returning user data for: {user.full_name} (Farmer ID: {user.farmer_id})")
+        
         response = JSONResponse({
             "success": True,
             "user": {
-                "id": current_user.id,
-                "farmer_id": current_user.farmer_id,
-                "full_name": current_user.full_name,
-                "mobile_number": current_user.mobile_number,
-                "email": current_user.email,
-                "state": getattr(current_user, 'state', None),
-                "district": getattr(current_user, 'district', None),
-                "village": getattr(current_user, 'village', None),
-                "language": getattr(current_user, 'language', 'en'),
-                "total_land_acres": getattr(current_user, 'total_land_acres', None),
-                "land_type": getattr(current_user, 'land_type', None),
-                "main_crops": getattr(current_user, 'main_crops', None),
-                "annual_income": getattr(current_user, 'annual_income', None),
-                "bank_account_number": getattr(current_user, 'bank_account_number', None),
-                "bank_name": getattr(current_user, 'bank_name', None),
-                "ifsc_code": getattr(current_user, 'ifsc_code', None),
-                "bank_verified": getattr(current_user, 'bank_verified', False),
-                "aadhaar_number": getattr(current_user, 'aadhaar_number', None),
-                "pan_number": getattr(current_user, 'pan_number', None),
-                "auto_apply_enabled": getattr(current_user, 'auto_apply_enabled', True),
-                "role": current_user.role.value if hasattr(current_user.role, 'value') else current_user.role,
-                "created_at": current_user.created_at.isoformat() if current_user.created_at else None
+                "id": user.id,
+                "farmer_id": user.farmer_id,  # ✅ Should be actual ID like AGRO12345678
+                "full_name": user.full_name,
+                "mobile_number": user.mobile_number,
+                "email": user.email,
+                "state": getattr(user, 'state', None),
+                "district": getattr(user, 'district', None),
+                "village": getattr(user, 'village', None),
+                "language": getattr(user, 'language', 'en'),
+                "total_land_acres": getattr(user, 'total_land_acres', None),
+                "land_type": getattr(user, 'land_type', None),
+                "main_crops": getattr(user, 'main_crops', None),
+                "annual_income": getattr(user, 'annual_income', None),
+                "bank_account_number": getattr(user, 'bank_account_number', None),
+                "bank_name": getattr(user, 'bank_name', None),
+                "ifsc_code": getattr(user, 'ifsc_code', None),
+                "bank_verified": getattr(user, 'bank_verified', False),
+                "aadhaar_number": getattr(user, 'aadhaar_number', None),
+                "pan_number": getattr(user, 'pan_number', None),
+                "auto_apply_enabled": getattr(user, 'auto_apply_enabled', True),
+                "role": user.role.value if hasattr(user.role, 'value') else user.role,
+                "created_at": user.created_at.isoformat() if user.created_at else None
             }
         })
         
@@ -67,6 +81,8 @@ async def get_current_user_info(
         
     except Exception as e:
         print(f"❌ Error in /me: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/me")
