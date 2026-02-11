@@ -1,13 +1,13 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text  # ← ADDED 'text' import for any future raw SQL
 from typing import List, Optional, Dict, Any
 import random
 import string
 from datetime import datetime
-from app.models import User, Document, GovernmentScheme, Application, Notification  # ✅ NEW
-from app.schemas import UserCreate, UserUpdate, SchemeCreate, DocumentCreate  # ✅ NEW
-from app.utils.security import get_password_hash, verify_password  # ✅ NEW
-from app.utils.helpers import generate_farmer_id, generate_application_id, calculate_eligibility  # ✅ NEW
+from app.models import User, Document, GovernmentScheme, Application, Notification
+from app.schemas import UserCreate, UserUpdate, SchemeCreate, DocumentCreate
+from app.utils.security import get_password_hash, verify_password
+from app.utils.helpers import generate_farmer_id, generate_application_id, calculate_eligibility
 
 def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
     return db.query(User).filter(User.id == user_id).first()
@@ -26,8 +26,17 @@ def create_user(db: Session, user: UserCreate) -> User:
     district_code = user.district[:2].upper()
     farmer_id = generate_farmer_id(state_code, district_code)
     
-    while get_user_by_farmer_id(db, farmer_id):
+    # Check if farmer_id already exists
+    existing_user = get_user_by_farmer_id(db, farmer_id)
+    attempts = 0
+    while existing_user and attempts < 10:  # Limit attempts to prevent infinite loop
         farmer_id = generate_farmer_id(state_code, district_code)
+        existing_user = get_user_by_farmer_id(db, farmer_id)
+        attempts += 1
+    
+    if attempts >= 10:
+        # Fallback: append random string
+        farmer_id = f"{farmer_id}{random.randint(100, 999)}"
     
     db_user = User(
         full_name=user.full_name,
@@ -42,33 +51,42 @@ def create_user(db: Session, user: UserCreate) -> User:
         role="farmer"
     )
     
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    
-    notification = Notification(
-        user_id=db_user.id,
-        title="Welcome to AgroScheme AI!",
-        message=f"Hello {db_user.full_name}, welcome to AgroScheme AI.",
-        notification_type="system"
-    )
-    db.add(notification)
-    db.commit()
-    
-    return db_user
+    try:
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        
+        # Create welcome notification
+        notification = Notification(
+            user_id=db_user.id,
+            title="Welcome to AgroScheme AI!",
+            message=f"Hello {db_user.full_name}, welcome to AgroScheme AI.",
+            notification_type="system"
+        )
+        db.add(notification)
+        db.commit()
+        
+        return db_user
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def update_user(db: Session, user_id: int, user_update: UserUpdate) -> Optional[User]:
     db_user = get_user_by_id(db, user_id)
     if not db_user:
         return None
     
-    update_data = user_update.dict(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(db_user, field, value)
-    
-    db.commit()
-    db.refresh(db_user)
-    return db_user
+    try:
+        update_data = user_update.dict(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(db_user, field, value)
+        
+        db.commit()
+        db.refresh(db_user)
+        return db_user
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def authenticate_user(db: Session, mobile_number: str, password: str) -> Optional[User]:
     user = get_user_by_mobile(db, mobile_number)
@@ -91,10 +109,14 @@ def create_document(db: Session, document: DocumentCreate, user_id: int, file_pa
         file_size=file_size
     )
     
-    db.add(db_document)
-    db.commit()
-    db.refresh(db_document)
-    return db_document
+    try:
+        db.add(db_document)
+        db.commit()
+        db.refresh(db_document)
+        return db_document
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def get_user_documents(db: Session, user_id: int) -> List[Document]:
     return db.query(Document).filter(Document.user_id == user_id).all()
@@ -107,14 +129,18 @@ def update_document_verification(db: Session, document_id: int, verified: bool, 
     if not document:
         return None
     
-    document.verified = verified
-    document.verification_date = datetime.utcnow()
-    if extracted_data:
-        document.extracted_data = extracted_data
-    
-    db.commit()
-    db.refresh(document)
-    return document
+    try:
+        document.verified = verified
+        document.verification_date = datetime.utcnow()
+        if extracted_data:
+            document.extracted_data = extracted_data
+        
+        db.commit()
+        db.refresh(document)
+        return document
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def create_scheme(db: Session, scheme: SchemeCreate, created_by: str) -> GovernmentScheme:
     db_scheme = GovernmentScheme(
@@ -130,10 +156,14 @@ def create_scheme(db: Session, scheme: SchemeCreate, created_by: str) -> Governm
         created_by=created_by
     )
     
-    db.add(db_scheme)
-    db.commit()
-    db.refresh(db_scheme)
-    return db_scheme
+    try:
+        db.add(db_scheme)
+        db.commit()
+        db.refresh(db_scheme)
+        return db_scheme
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def get_scheme_by_id(db: Session, scheme_id: int) -> Optional[GovernmentScheme]:
     return db.query(GovernmentScheme).filter(GovernmentScheme.id == scheme_id).first()
@@ -152,8 +182,11 @@ def create_application(db: Session, user_id: int, scheme_id: int, application_da
     if not scheme:
         raise ValueError("Scheme not found")
     
-    application_id = generate_application_id(scheme.scheme_code)
     user = get_user_by_id(db, user_id)
+    if not user:
+        raise ValueError("User not found")
+    
+    application_id = generate_application_id(scheme.scheme_code)
     
     app_data = {
         "user_info": {
@@ -184,22 +217,27 @@ def create_application(db: Session, user_id: int, scheme_id: int, application_da
         applied_amount=scheme.benefit_amount
     )
     
-    db.add(db_application)
-    db.commit()
-    db.refresh(db_application)
-    
-    notification = Notification(
-        user_id=user_id,
-        title=f"Application Submitted: {scheme.scheme_name}",
-        message=f"Your application has been submitted. ID: {application_id}",
-        notification_type="application",
-        related_scheme_id=scheme_id,
-        related_application_id=db_application.id
-    )
-    db.add(notification)
-    db.commit()
-    
-    return db_application
+    try:
+        db.add(db_application)
+        db.commit()
+        db.refresh(db_application)
+        
+        # Create notification
+        notification = Notification(
+            user_id=user_id,
+            title=f"Application Submitted: {scheme.scheme_name}",
+            message=f"Your application has been submitted. ID: {application_id}",
+            notification_type="application",
+            related_scheme_id=scheme_id,
+            related_application_id=db_application.id
+        )
+        db.add(notification)
+        db.commit()
+        
+        return db_application
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def get_user_applications(db: Session, user_id: int) -> List[Application]:
     return db.query(Application).filter(Application.user_id == user_id).all()
@@ -224,32 +262,37 @@ def update_application_status(db: Session, application_id: int, status: str, app
     if not application:
         return None
     
-    status_history = application.status_history or []
-    status_history.append({
-        "status": status,
-        "timestamp": datetime.utcnow().isoformat(),
-        "approved_amount": approved_amount
-    })
-    
-    application.status = status
-    application.approved_amount = approved_amount
-    application.status_history = status_history
-    
-    db.commit()
-    db.refresh(application)
-    
-    notification = Notification(
-        user_id=application.user_id,
-        title=f"Application Status Updated: {application.status}",
-        message=f"Your application {application.application_id} status has been updated.",
-        notification_type="application",
-        related_scheme_id=application.scheme_id,
-        related_application_id=application_id
-    )
-    db.add(notification)
-    db.commit()
-    
-    return application
+    try:
+        status_history = application.status_history or []
+        status_history.append({
+            "status": status,
+            "timestamp": datetime.utcnow().isoformat(),
+            "approved_amount": approved_amount
+        })
+        
+        application.status = status
+        application.approved_amount = approved_amount
+        application.status_history = status_history
+        
+        db.commit()
+        db.refresh(application)
+        
+        # Create notification
+        notification = Notification(
+            user_id=application.user_id,
+            title=f"Application Status Updated: {application.status}",
+            message=f"Your application {application.application_id} status has been updated.",
+            notification_type="application",
+            related_scheme_id=application.scheme_id,
+            related_application_id=application_id
+        )
+        db.add(notification)
+        db.commit()
+        
+        return application
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def check_user_eligibility(db: Session, user_id: int, scheme_id: int) -> Dict[str, Any]:
     user = get_user_by_id(db, user_id)
@@ -292,10 +335,14 @@ def create_notification(db: Session, user_id: int, title: str, message: str, not
         related_application_id=related_application_id
     )
     
-    db.add(notification)
-    db.commit()
-    db.refresh(notification)
-    return notification
+    try:
+        db.add(notification)
+        db.commit()
+        db.refresh(notification)
+        return notification
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def get_user_notifications(db: Session, user_id: int, unread_only: bool = False) -> List[Notification]:
     query = db.query(Notification).filter(Notification.user_id == user_id)
@@ -308,27 +355,47 @@ def mark_notification_as_read(db: Session, notification_id: int) -> Optional[Not
     if not notification:
         return None
     
-    notification.read = True
-    db.commit()
-    db.refresh(notification)
-    return notification
+    try:
+        notification.read = True
+        db.commit()
+        db.refresh(notification)
+        return notification
+    except Exception as e:
+        db.rollback()
+        raise e
 
 def get_admin_stats(db: Session) -> Dict[str, Any]:
-    total_farmers = db.query(func.count(User.id)).filter(User.role == "farmer").scalar() or 0
-    total_applications = db.query(func.count(Application.id)).scalar() or 0
-    total_schemes = db.query(func.count(GovernmentScheme.id)).scalar() or 0
-    benefits_distributed = db.query(func.sum(Application.approved_amount)).filter(
-        Application.status == "approved"
-    ).scalar() or 0
-    pending_verifications = db.query(func.count(Document.id)).filter(
-        Document.verified == False
-    ).scalar() or 0
-    
-    return {
-        "total_farmers": total_farmers,
-        "total_applications": total_applications,
-        "total_schemes": total_schemes,
-        "benefits_distributed": float(benefits_distributed or 0),
-        "pending_verifications": pending_verifications,
-        "ai_accuracy": 98.5
-    }
+    try:
+        total_farmers = db.query(func.count(User.id)).filter(User.role == "farmer").scalar() or 0
+        total_applications = db.query(func.count(Application.id)).scalar() or 0
+        total_schemes = db.query(func.count(GovernmentScheme.id)).scalar() or 0
+        
+        # For sum, need to handle None
+        benefits_sum = db.query(func.sum(Application.approved_amount)).filter(
+            Application.status == "approved"
+        ).scalar()
+        benefits_distributed = float(benefits_sum) if benefits_sum else 0.0
+        
+        pending_verifications = db.query(func.count(Document.id)).filter(
+            Document.verified == False
+        ).scalar() or 0
+        
+        return {
+            "total_farmers": total_farmers,
+            "total_applications": total_applications,
+            "total_schemes": total_schemes,
+            "benefits_distributed": benefits_distributed,
+            "pending_verifications": pending_verifications,
+            "ai_accuracy": 98.5
+        }
+    except Exception as e:
+        # Return default stats if query fails
+        return {
+            "total_farmers": 0,
+            "total_applications": 0,
+            "total_schemes": 0,
+            "benefits_distributed": 0.0,
+            "pending_verifications": 0,
+            "ai_accuracy": 98.5,
+            "error": str(e)[:100]  # Include error for debugging
+        }
