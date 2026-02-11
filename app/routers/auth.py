@@ -15,6 +15,7 @@ from app.supabase_client import get_supabase_client
 # ✅ FIX: Use prefix="/auth" here, and DO NOT add prefix in main.py
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
+# app/routers/auth.py - Update the login function
 @router.post("/login")
 async def login(request: Request, form_data: UserLogin, db: Session = Depends(get_db)):
     """
@@ -49,42 +50,44 @@ async def login(request: Request, form_data: UserLogin, db: Session = Depends(ge
             expires_delta=access_token_expires
         )
         
-        # Prepare response
+        # ✅ FIX: Safely get attributes with defaults
+        user_data = {
+            "id": user.id,
+            "farmer_id": user.farmer_id,
+            "full_name": user.full_name,
+            "mobile_number": user.mobile_number,
+            "email": user.email,
+            "role": user.role.value if hasattr(user.role, 'value') else user.role,
+            "state": getattr(user, 'state', None),
+            "district": getattr(user, 'district', None),
+            "village": getattr(user, 'village', None),
+            "total_land_acres": getattr(user, 'total_land_acres', None),
+            "annual_income": getattr(user, 'annual_income', None),
+            "land_type": getattr(user, 'land_type', None),
+            "main_crops": getattr(user, 'main_crops', None),
+            "bank_account_number": getattr(user, 'bank_account_number', None),
+            "ifsc_code": getattr(user, 'ifsc_code', None),
+            # ✅ Safely handle aadhaar_number - it might not exist in DB
+            "aadhaar_number": getattr(user, 'aadhaar_number', None),
+            "pan_number": getattr(user, 'pan_number', None),
+            "language": getattr(user, 'language', 'en'),
+            "auto_apply_enabled": getattr(user, 'auto_apply_enabled', True),
+            "email_notifications": getattr(user, 'email_notifications', True),
+            "sms_notifications": getattr(user, 'sms_notifications', True)
+        }
+        
         response_data = {
             "success": True,
             "access_token": access_token,
             "token_type": "bearer",
-            "user": {
-                "id": user.id,
-                "farmer_id": user.farmer_id,
-                "full_name": user.full_name,
-                "mobile_number": user.mobile_number,
-                "email": user.email,
-                "role": user.role.value if hasattr(user.role, 'value') else user.role,
-                "state": user.state,
-                "district": user.district,
-                "village": user.village,
-                "total_land_acres": user.total_land_acres,
-                "annual_income": user.annual_income,
-                "land_type": user.land_type,
-                "main_crops": user.main_crops,
-                "bank_account_number": user.bank_account_number,
-                "ifsc_code": user.ifsc_code,
-                "aadhaar_number": user.aadhaar_number,
-                "pan_number": user.pan_number
-            }
+            "user": user_data
         }
         
         response = JSONResponse(content=response_data)
         
-        # ✅ CRITICAL: Set CORS headers for Vercel
+        # Set CORS headers
         if origin:
-            # Allow your Vercel domain
-            if "vercel.app" in origin:
-                response.headers["Access-Control-Allow-Origin"] = origin
-                response.headers["Access-Control-Allow-Credentials"] = "true"
-            # Also check allowed origins list
-            elif origin in settings.ALLOWED_ORIGINS:
+            if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
                 response.headers["Access-Control-Allow-Origin"] = origin
                 response.headers["Access-Control-Allow-Credentials"] = "true"
         
