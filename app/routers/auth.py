@@ -13,7 +13,6 @@ from app.config import settings
 from app.supabase_client import get_supabase_client
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
-
 @router.post("/login")
 async def login(request: Request, form_data: UserLogin, db: Session = Depends(get_db)):
     """
@@ -34,13 +33,21 @@ async def login(request: Request, form_data: UserLogin, db: Session = Depends(ge
                 detail="Incorrect mobile number or password",
             )
         
-        print(f"✅ User authenticated: {user.full_name} (ID: {user.id})")
+        # ✅ Ensure farmer_id exists
+        if not user.farmer_id:
+            # Generate farmer ID if not exists
+            import uuid
+            user.farmer_id = f"AGRO{str(uuid.uuid4().int)[:8]}"
+            db.commit()
+            db.refresh(user)
+        
+        print(f"✅ User authenticated: {user.full_name} (ID: {user.id}, Farmer ID: {user.farmer_id})")
         
         # Create access token
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
             data={
-                "sub": str(user.id),
+                "sub": str(user.id),  # ✅ Use the actual database ID
                 "mobile": user.mobile_number,
                 "role": user.role.value if hasattr(user.role, 'value') else user.role,
                 "farmer_id": user.farmer_id
@@ -48,10 +55,10 @@ async def login(request: Request, form_data: UserLogin, db: Session = Depends(ge
             expires_delta=access_token_expires
         )
         
-        # ✅ FIX: Safely get attributes with defaults
+        # ✅ FIX: Use actual user data from database
         user_data = {
             "id": user.id,
-            "farmer_id": user.farmer_id,
+            "farmer_id": user.farmer_id,  # ✅ This should be actual farmer_id like AGRO12345678
             "full_name": user.full_name,
             "mobile_number": user.mobile_number,
             "email": user.email,
@@ -78,18 +85,18 @@ async def login(request: Request, form_data: UserLogin, db: Session = Depends(ge
             "success": True,
             "access_token": access_token,
             "token_type": "bearer",
-            "user": user_data
+            "user": user_data  # ✅ This contains the REAL user data
         }
         
         response = JSONResponse(content=response_data)
         
-        # ✅ Set CORS headers
+        # Set CORS headers
         if origin:
             if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
                 response.headers["Access-Control-Allow-Origin"] = origin
                 response.headers["Access-Control-Allow-Credentials"] = "true"
         
-        print(f"✅ Login successful for: {user.full_name}")
+        print(f"✅ Login successful for: {user.full_name} (Farmer ID: {user.farmer_id})")
         return response
         
     except HTTPException:
