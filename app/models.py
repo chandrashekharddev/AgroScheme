@@ -26,8 +26,8 @@ class ApplicationStatus(str, enum.Enum):
 
 # app/models.py - Make SchemeType case-insensitive
 class SchemeType(str, enum.Enum):
-    CENTRAL = "central"
-    STATE = "state"
+    CENTRAL = "CENTRAL"
+    STATE = "STATE"
     
     @classmethod
     def _missing_(cls, value):
