@@ -104,8 +104,9 @@ async def startup_event():
     app.include_router(schemes.router, prefix="/schemes")
     app.include_router(documents.router, prefix="/documents")
     app.include_router(admin.router, prefix="/admin")
-    
-     print("\n📋 Registered Routes:")
+
+    print("✅ All routers loaded successfully")
+    print("\n📋 Registered Routes:")
     for route in app.routes:
         if hasattr(route, 'methods'):
             print(f"  {list(route.methods)} - {route.path}")
