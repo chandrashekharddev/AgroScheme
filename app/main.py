@@ -22,14 +22,14 @@ app = FastAPI(
 )
 
 # CORS Middleware - UPDATED WITH COMPLETE CONFIGURATION
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=settings.ALLOW_CREDENTIALS,
-    allow_methods=settings.ALLOW_METHODS,
-    allow_headers=settings.ALLOW_HEADERS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["*"],
     expose_headers=["*"],
-    max_age=600,  # Cache preflight requests for 10 minutes
 )
 
 # Create uploads directory
