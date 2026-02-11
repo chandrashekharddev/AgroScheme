@@ -9,4 +9,6 @@ pydantic==2.5.0
 email-validator==2.1.0
 anyio>=3.7.1, <4.0.0
 psycopg2-binary==2.9.9
-Pillow==10.3.0  # ← ADD THIS LINE
+Pillow==10.3.0 
+supabase>=1.2.0
+postgrest>=0.10.0
