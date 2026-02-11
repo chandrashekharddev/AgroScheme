@@ -1,4 +1,4 @@
-# app/main.py - CRITICAL CORS FIX
+# app/main.py - COMPLETE FIXED VERSION
 import os
 from pathlib import Path
 from fastapi import FastAPI, Depends, Request
@@ -22,10 +22,10 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
-# ✅ CRITICAL: CORS Middleware with EXPLICIT settings
+# ✅ CORS Middleware - CRITICAL FIX
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,  # Must be exact strings
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,36 +33,27 @@ app.add_middleware(
     max_age=600,
 )
 
-# ✅ ADD THIS: Middleware to add CORS headers to EVERY response
+# ✅ Global CORS middleware for all responses
 @app.middleware("http")
 async def add_cors_headers(request: Request, call_next):
     response = await call_next(request)
     origin = request.headers.get("origin")
     
-    # Allow your Vercel domain
-    if origin and "vercel.app" in origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With"
-    # Also check allowed origins list
-    elif origin in settings.ALLOWED_ORIGINS:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
+    if origin:
+        if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept, Origin"
     
     return response
 
-# ✅ FIXED: Handle OPTIONS requests properly
+# ✅ Handle OPTIONS preflight requests
 @app.options("/{full_path:path}")
 async def options_handler(request: Request, full_path: str):
     origin = request.headers.get("origin", "")
+    response = JSONResponse(content={"message": "OK"}, status_code=200)
     
-    response = JSONResponse(
-        content={"message": "OK"},
-        status_code=200
-    )
-    
-    # Allow your Vercel domain
     if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -73,15 +64,16 @@ async def options_handler(request: Request, full_path: str):
     return response
 
 # Create uploads directory
-uploads_dir = Path("uploads")
+uploads_dir = Path(settings.UPLOAD_DIR)
 uploads_dir.mkdir(exist_ok=True)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 @app.on_event("startup")
 async def startup_event():
+    """Initialize application on startup"""
     print("=" * 50)
     print(f"🚀 Starting {settings.PROJECT_NAME} v{settings.PROJECT_VERSION}")
-    print(f"🔗 Supabase URL: {settings.SUPABASE_URL}")
+    print(f"🔗 Supabase URL: {settings.SUPABASE_URL if hasattr(settings, 'SUPABASE_URL') else 'Not configured'}")
     print(f"🌐 CORS Allowed Origins: {settings.ALLOWED_ORIGINS}")
     print("=" * 50)
     
@@ -96,19 +88,23 @@ async def startup_event():
     except Exception as e:
         print(f"⚠️ Database initialization failed: {str(e)}")
     
-    # Import and include routers
+    # ✅ CRITICAL FIX: Import and include routers WITHOUT duplicate prefixes
     from app.routers import auth, farmers, schemes, documents, admin
     
-    app.include_router(auth.router)  # NO PREFIX HERE
-    app.include_router(farmers.router, prefix="/farmers")
-    app.include_router(schemes.router, prefix="/schemes")
-    app.include_router(documents.router, prefix="/documents")
-    app.include_router(admin.router, prefix="/admin")
-
+    app.include_router(auth.router)      # Auth already has /auth prefix
+    app.include_router(farmers.router)   # Farmers already has /farmers prefix
+    app.include_router(schemes.router)   # Schemes already has /schemes prefix
+    app.include_router(documents.router) # Documents already has /documents prefix
+    app.include_router(admin.router)     # Admin already has /admin prefix
+    
     print("✅ All routers loaded successfully")
+    
+    # Print all routes for debugging
     print("\n📋 Registered Routes:")
+    routes_list = []
     for route in app.routes:
-        if hasattr(route, 'methods'):
+        if hasattr(route, 'methods') and route.path not in routes_list:
+            routes_list.append(route.path)
             print(f"  {list(route.methods)} - {route.path}")
     print("=" * 50)
 
@@ -120,22 +116,39 @@ async def root(request: Request):
         "version": settings.PROJECT_VERSION,
         "status": "running",
         "docs": "/docs",
-        "supabase_configured": bool(settings.SUPABASE_URL and settings.SUPABASE_KEY),
         "your_origin": origin,
         "cors_allowed_origins": settings.ALLOWED_ORIGINS,
         "timestamp": datetime.utcnow().isoformat()
     }
 
-@app.get("/cors-test")
-async def cors_test(request: Request):
-    """Test CORS configuration"""
-    origin = request.headers.get("origin", "Not provided")
-    
-    return {
-        "message": "CORS test endpoint",
-        "origin_received": origin,
-        "allowed_origins": settings.ALLOWED_ORIGINS,
-        "is_allowed": origin in settings.ALLOWED_ORIGINS or "vercel.app" in origin,
-        "supabase_url": settings.SUPABASE_URL,
-        "timestamp": datetime.utcnow().isoformat()
-    }
+@app.get("/health")
+async def health_check(db: Session = Depends(get_db)):
+    """Health check with database connection test"""
+    try:
+        db.execute(text("SELECT 1"))
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "service": "agroscheme-api",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        return {
+            "status": "degraded",
+            "database": "disconnected",
+            "service": "agroscheme-api",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+@app.get("/debug/routes")
+async def debug_routes():
+    """Debug endpoint to see all registered routes"""
+    routes = []
+    for route in app.routes:
+        if hasattr(route, 'methods'):
+            routes.append({
+                "path": route.path,
+                "methods": list(route.methods),
+                "name": route.name
+            })
+    return {"routes": routes, "count": len(routes)}
