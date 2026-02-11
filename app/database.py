@@ -13,7 +13,7 @@ DATABASE_URL = settings.DATABASE_URL
 is_postgresql = "postgresql" in DATABASE_URL
 is_sqlite = "sqlite" in DATABASE_URL
 
-# Debug info
+# Debug info - REMOVED the problematic line
 print(f"🔍 Database URL configured")
 print(f"📊 Using {'PostgreSQL' if is_postgresql else 'SQLite'} database")
 
