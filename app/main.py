@@ -1,3 +1,4 @@
+# app/main.py - Updated CORS Middleware
 import os
 from pathlib import Path
 from fastapi import FastAPI, Depends, Request
@@ -21,13 +22,25 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
-# CORS Middleware - SIMPLE
+# ✅ FIXED: CORS Middleware with explicit origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "Access-Control-Allow-Origin",
+        "Access-Control-Allow-Credentials",
+        "Access-Control-Allow-Methods",
+        "Access-Control-Allow-Headers"
+    ],
+    expose_headers=["Content-Type", "Authorization"],
+    max_age=600  # Cache preflight requests for 10 minutes
 )
 
 # Create uploads directory
@@ -58,14 +71,15 @@ async def startup_event():
     # Import and include routers
     from app.routers import auth, farmers, schemes, documents, admin
     
-    app.include_router(auth.router, tags=["Authentication"])
-    app.include_router(farmers.router, tags=["Farmers"])
-    app.include_router(schemes.router, tags=["Schemes"])
-    app.include_router(documents.router, tags=["Documents"])
-    app.include_router(admin.router, tags=["Admin"])
+    app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
+    app.include_router(farmers.router, prefix="/farmers", tags=["Farmers"])
+    app.include_router(schemes.router, prefix="/schemes", tags=["Schemes"])
+    app.include_router(documents.router, prefix="/documents", tags=["Documents"])
+    app.include_router(admin.router, prefix="/admin", tags=["Admin"])
     
     print("✅ All routers loaded successfully")
     print("✅ API ready to accept requests")
+    print(f"✅ CORS Allowed Origins: {settings.ALLOWED_ORIGINS}")
 
 @app.get("/")
 async def root():
@@ -74,6 +88,8 @@ async def root():
         "version": settings.PROJECT_VERSION,
         "status": "running",
         "docs": "/docs",
+        "cors_enabled": True,
+        "allowed_origins": settings.ALLOWED_ORIGINS,
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -105,17 +121,30 @@ async def cors_test(request: Request):
         "message": "CORS test endpoint",
         "origin_received": origin,
         "allowed_origins": settings.ALLOWED_ORIGINS,
+        "is_allowed": origin in settings.ALLOWED_ORIGINS,
         "timestamp": datetime.utcnow().isoformat()
     }
 
+# ✅ FIXED: Proper OPTIONS handler
 @app.options("/{full_path:path}")
-async def preflight_handler():
+async def preflight_handler(request: Request, full_path: str):
     """Handle OPTIONS requests for all endpoints"""
-    return JSONResponse(
+    origin = request.headers.get("origin", "")
+    
+    response = JSONResponse(
         content={"message": "Preflight request successful"},
-        headers={
-            "Access-Control-Allow-Origin": ", ".join(settings.ALLOWED_ORIGINS),
-            "Access-Control-Allow-Methods": "*",
-            "Access-Control-Allow-Headers": "*",
-        }
+        status_code=200
     )
+    
+    # Dynamically set CORS headers
+    if origin in settings.ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+    elif settings.ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = settings.ALLOWED_ORIGINS[0]
+    
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, Accept, Origin, X-Requested-With"
+    response.headers["Access-Control-Max-Age"] = "600"
+    
+    return response
