@@ -9,18 +9,17 @@ from app.config import settings
 # Get database URL from settings
 DATABASE_URL = settings.DATABASE_URL
 
+# Determine database type
+is_postgresql = "postgresql" in DATABASE_URL
+is_sqlite = "sqlite" in DATABASE_URL
+
 # Debug info
-print(f"🔍 Database Type: {settings.database_type}")
-if hasattr(settings, 'safe_database_url'):
-    print(f"🔍 Database URL (masked): {settings.safe_database_url}")
+print(f"🔍 Database URL configured")
+print(f"📊 Using {'PostgreSQL' if is_postgresql else 'SQLite'} database")
 
 # Fix PostgreSQL URL format if needed
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-# Determine database type
-is_postgresql = "postgresql" in DATABASE_URL
-is_sqlite = "sqlite" in DATABASE_URL
 
 # Create engine with appropriate configuration
 connect_args = {}
@@ -29,7 +28,6 @@ if is_sqlite:
     connect_args = {"check_same_thread": False}
     # Ensure uploads directory exists
     os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
-    print("📁 Using SQLite database")
 elif is_postgresql:
     # PostgreSQL configuration for Supabase
     # Ensure SSL is required
@@ -46,7 +44,6 @@ elif is_postgresql:
         "keepalives_idle": 30,
         "sslmode": "require"
     }
-    print("📊 Using PostgreSQL database")
 
 # Create the engine
 try:
@@ -74,7 +71,6 @@ try:
             user_info = result.fetchone()
             print(f"   Connected as: {user_info[0]}")
             print(f"   Database: {user_info[1]}")
-            print(f"   Connection time: {user_info[2]}")
     
 except Exception as e:
     print(f"❌ Failed to create database engine: {e}")
