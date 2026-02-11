@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+from sqlalchemy import text  # ← ADD THIS IMPORT
 
 from app.config import settings
 from app.database import get_db, Base, engine
@@ -42,9 +43,9 @@ async def startup_event():
     print("=" * 50)
     
     try:
-        # Test database connection
+        # Test database connection WITH text()
         with engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))  # ← FIXED: Added text()
         
         # Create tables if they don't exist
         Base.metadata.create_all(bind=engine)
@@ -84,8 +85,8 @@ async def root():
 async def health_check(db: Session = Depends(get_db)):
     """Health check with database connection test"""
     try:
-        # Test database connection
-        db.execute("SELECT 1")
+        # Test database connection WITH text()
+        db.execute(text("SELECT 1"))  # ← FIXED: Added text()
         return {
             "status": "healthy",
             "database": "connected",
