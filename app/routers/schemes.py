@@ -176,6 +176,37 @@ async def check_scheme_eligibility(
             "message": "Failed to check eligibility"
         })
 
+@router.get("/debug/emergency")
+async def debug_emergency(db: Session = Depends(get_db)):
+    """EMERGENCY DEBUG - Direct SQL query"""
+    try:
+        # Use raw SQL to bypass all ORM issues
+        from sqlalchemy import text
+        
+        result = db.execute(
+            text("SELECT id, scheme_code, scheme_name, scheme_type, benefit_amount, is_active FROM government_schemes")
+        ).fetchall()
+        
+        schemes = []
+        for row in result:
+            schemes.append({
+                "id": row[0],
+                "scheme_code": row[1],
+                "scheme_name": row[2] or row[1],  # Use code as name if name is NULL
+                "scheme_type": row[3] or "central",
+                "benefit_amount": row[4] or "0",
+                "is_active": row[5] if row[5] is not None else True
+            })
+        
+        return {
+            "success": True,
+            "count": len(schemes),
+            "schemes": schemes,
+            "message": "EMERGENCY DEBUG - Raw SQL query"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+        
 @router.post("/{scheme_id}/apply")
 async def apply_for_scheme(
     request: Request,
