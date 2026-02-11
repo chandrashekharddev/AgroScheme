@@ -21,7 +21,7 @@ app = FastAPI(
     openapi_url="/openapi.json"
 )
 
-# CORS Middleware - SIMPLIFIED
+# CORS Middleware - SIMPLE
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
@@ -35,16 +35,11 @@ uploads_dir = Path("uploads")
 uploads_dir.mkdir(exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# Store initialization state
-app.state.database_initialized = False
-app.state.database_engine = engine
-
 @app.on_event("startup")
 async def startup_event():
     """Initialize application on startup"""
     print("=" * 50)
     print(f"🚀 Starting {settings.PROJECT_NAME} v{settings.PROJECT_VERSION}")
-    print(f"🌐 CORS Origins: {settings.ALLOWED_ORIGINS}")
     print("=" * 50)
     
     try:
@@ -54,14 +49,11 @@ async def startup_event():
         
         # Create tables if they don't exist
         Base.metadata.create_all(bind=engine)
-        
-        app.state.database_initialized = True
         print("✅ Database connected and tables created")
         
     except Exception as e:
         print(f"⚠️ Database initialization failed: {str(e)}")
         print("⚠️ Some database features may not work")
-        app.state.database_initialized = False
     
     # Import and include routers
     from app.routers import auth, farmers, schemes, documents, admin
@@ -81,9 +73,7 @@ async def root():
         "message": "AgroScheme AI API",
         "version": settings.PROJECT_VERSION,
         "status": "running",
-        "database": "connected" if app.state.database_initialized else "disconnected",
         "docs": "/docs",
-        "health": "/health",
         "timestamp": datetime.utcnow().isoformat()
     }
 
@@ -103,7 +93,6 @@ async def health_check(db: Session = Depends(get_db)):
             "status": "degraded",
             "database": "disconnected",
             "service": "agroscheme-api",
-            "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }
 
@@ -115,7 +104,6 @@ async def cors_test(request: Request):
     return {
         "message": "CORS test endpoint",
         "origin_received": origin,
-        "origin_allowed": origin in settings.ALLOWED_ORIGINS,
         "allowed_origins": settings.ALLOWED_ORIGINS,
         "timestamp": datetime.utcnow().isoformat()
     }
@@ -127,8 +115,7 @@ async def preflight_handler():
         content={"message": "Preflight request successful"},
         headers={
             "Access-Control-Allow-Origin": ", ".join(settings.ALLOWED_ORIGINS),
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Methods": "*",
             "Access-Control-Allow-Headers": "*",
-            "Access-Control-Allow-Credentials": "true",
         }
     )
