@@ -25,21 +25,6 @@ class ApplicationStatus(str, enum.Enum):
     REJECTED = "rejected"
     DOCS_NEEDED = "docs_needed"
 
-# ✅ FIXED: SchemeType enum values now match database (lowercase)
-class SchemeType(str, enum.Enum):
-    CENTRAL = "central"  # ✅ Changed from "CENTRAL" to "central"
-    STATE = "state"      # ✅ Changed from "STATE" to "state"
-    
-    @classmethod
-    def _missing_(cls, value):
-        """Make enum case-insensitive (fallback)"""
-        if isinstance(value, str):
-            value = value.lower()
-            for member in cls:
-                if member.value == value:
-                    return member
-        return None
-
 class User(Base):
     __tablename__ = "users"
     
@@ -92,7 +77,6 @@ class Document(Base):
     # Relationships
     user = relationship("User", back_populates="documents")
 
-# app/models.py - CHANGE THIS:
 class GovernmentScheme(Base):
     __tablename__ = "government_schemes"
     
@@ -112,6 +96,9 @@ class GovernmentScheme(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
+    # ✅ FIX: Add this relationship - THIS WAS MISSING!
+    applications = relationship("Application", back_populates="scheme", cascade="all, delete-orphan")
+
 class Application(Base):
     __tablename__ = "applications"
     
@@ -122,15 +109,15 @@ class Application(Base):
     status = Column(Enum(ApplicationStatus), default=ApplicationStatus.PENDING)
     applied_amount = Column(Float)
     approved_amount = Column(Float)
-    application_data = Column(JSON, nullable=False)
-    submitted_documents = Column(JSON)
-    status_history = Column(JSON)
+    application_data = Column(JSON, nullable=False, default={})
+    submitted_documents = Column(JSON, default=[])
+    status_history = Column(JSON, default=[])
     applied_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
     # Relationships
     user = relationship("User", back_populates="applications")
-    scheme = relationship("GovernmentScheme", back_populates="applications")
+    scheme = relationship("GovernmentScheme", back_populates="applications")  # ✅ This requires GovernmentScheme to have 'applications' property
 
 class Notification(Base):
     __tablename__ = "notifications"
