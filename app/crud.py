@@ -181,29 +181,39 @@ def get_scheme_by_id(db: Session, scheme_id: int) -> Optional[GovernmentScheme]:
 def get_scheme_by_code(db: Session, scheme_code: str) -> Optional[GovernmentScheme]:
     return db.query(GovernmentScheme).filter(GovernmentScheme.scheme_code == scheme_code).first()
 
-# app/crud.py - Update get_all_schemes
 def get_all_schemes(db: Session, skip: int = 0, limit: int = 100, active_only: bool = False):
     """Get all government schemes with error handling"""
     try:
+        print(f"🔍 get_all_schemes called with active_only={active_only}")
+        
+        # Build query
         query = db.query(GovernmentScheme)
         if active_only:
             query = query.filter(GovernmentScheme.is_active == True)
+            print(f"✅ Applied active_only filter")
         
+        # Get count first
+        total_count = query.count()
+        print(f"📊 Total schemes matching query: {total_count}")
+        
+        # Get paginated results
         schemes = query.offset(skip).limit(limit).all()
+        print(f"📦 Retrieved {len(schemes)} schemes after pagination")
         
-        # ✅ Fix: Convert enum values to strings safely
-        for scheme in schemes:
-            if hasattr(scheme, 'scheme_type') and scheme.scheme_type:
-                # Ensure scheme_type is a string
-                if hasattr(scheme.scheme_type, 'value'):
-                    scheme.scheme_type = scheme.scheme_type.value
-                else:
-                    scheme.scheme_type = str(scheme.scheme_type).lower()
+        # Log each scheme found
+        for i, scheme in enumerate(schemes):
+            print(f"  Scheme {i+1}: ID={scheme.id}, Code={scheme.scheme_code}, Name={scheme.scheme_name}, Active={scheme.is_active}")
         
+        # DON'T modify the original objects - create new dicts instead
+        # This is just for logging, not modification
         return schemes
+        
     except Exception as e:
         print(f"❌ Error in get_all_schemes: {e}")
+        import traceback
+        traceback.print_exc()
         return []
+        
 def create_application(db: Session, user_id: int, scheme_id: int, application_data: Dict[str, Any]) -> Application:
     scheme = get_scheme_by_id(db, scheme_id)
     if not scheme:
