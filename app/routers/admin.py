@@ -853,12 +853,14 @@ async def get_pending_documents(
             detail=f"Failed to fetch pending documents: {str(e)}"
         )
 
+# ==================== DOCUMENTS - FIXED WITH SUPABASE STORAGE ====================
+
 @router.get("/documents/{document_id}")
 async def get_document_details(
     document_id: int,
     db: Session = Depends(get_db)
 ):
-    """Get document details for verification"""
+    """Get document details for verification with Supabase signed URL"""
     try:
         document = get_document_by_id(db, document_id)
         if not document:
@@ -869,6 +871,17 @@ async def get_document_details(
         
         user = get_user_by_id(db, document.user_id)
         
+        # ✅ GENERATE SIGNED URL FROM SUPABASE STORAGE
+        file_url = None
+        if document.file_path:
+            try:
+                from app.supabase_storage import supabase_storage
+                # Generate signed URL with 1 hour expiry
+                file_url = await supabase_storage.get_document_url(document.file_path)
+            except Exception as e:
+                print(f"⚠️ Failed to generate signed URL: {e}")
+                # Fallback to null - frontend will show placeholder
+        
         return JSONResponse({
             "success": True,
             "document": {
@@ -877,6 +890,7 @@ async def get_document_details(
                 "file_name": document.file_name,
                 "file_path": document.file_path,
                 "file_size": document.file_size,
+                "file_url": file_url,  # ✅ Now returns Supabase signed URL
                 "uploaded_at": document.uploaded_at.isoformat() if document.uploaded_at else None,
                 "verified": document.verified,
                 "verification_date": document.verification_date.isoformat() if document.verification_date else None,
@@ -887,16 +901,90 @@ async def get_document_details(
                     "full_name": user.full_name if user else "Unknown",
                     "mobile_number": user.mobile_number if user else None,
                     "email": user.email if user else None
-                } if user else None,
-                "file_url": f"/uploads/user_{document.user_id}/{document.file_name}" if document.file_path else None
+                } if user else None
             }
         })
     except HTTPException:
         raise
     except Exception as e:
+        print(f"❌ Error fetching document details: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch document details: {str(e)}"
+        )
+
+@router.get("/documents")
+async def get_all_documents_admin(
+    skip: int = 0,
+    limit: int = 100,
+    verified: Optional[bool] = None,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get all documents with signed URLs (admin view)"""
+    try:
+        query = db.query(Document)
+        
+        if verified is not None:
+            query = query.filter(Document.verified == verified)
+        
+        documents = query.order_by(Document.uploaded_at.desc()).offset(skip).limit(limit).all()
+        
+        result = []
+        for doc in documents:
+            user = get_user_by_id(db, doc.user_id)
+            
+            # Generate signed URL for each document
+            file_url = None
+            if doc.file_path:
+                try:
+                    from app.supabase_storage import supabase_storage
+                    file_url = await supabase_storage.get_document_url(doc.file_path)
+                except Exception as e:
+                    print(f"⚠️ Failed to generate URL for doc {doc.id}: {e}")
+            
+            doc_data = {
+                "id": doc.id,
+                "document_type": doc.document_type.value if hasattr(doc.document_type, 'value') else doc.document_type,
+                "file_name": doc.file_name,
+                "file_path": doc.file_path,
+                "file_url": file_url,
+                "file_size": doc.file_size,
+                "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+                "verified": doc.verified,
+                "verification_date": doc.verification_date.isoformat() if doc.verification_date else None,
+                "extracted_data": doc.extracted_data,
+                "user": {
+                    "id": user.id if user else None,
+                    "farmer_id": user.farmer_id if user else None,
+                    "full_name": user.full_name if user else "Unknown",
+                    "mobile_number": user.mobile_number if user else None
+                } if user else None
+            }
+            
+            # Apply search filter
+            if search:
+                search_lower = search.lower()
+                matches = (
+                    (doc_data["user"] and doc_data["user"]["full_name"] and search_lower in doc_data["user"]["full_name"].lower()) or
+                    (doc_data["document_type"] and search_lower in str(doc_data["document_type"]).lower()) or
+                    (doc.file_name and search_lower in doc.file_name.lower())
+                )
+                if not matches:
+                    continue
+            
+            result.append(doc_data)
+        
+        return JSONResponse({
+            "success": True,
+            "count": len(result),
+            "documents": result
+        })
+    except Exception as e:
+        print(f"❌ Error fetching documents: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch documents: {str(e)}"
         )
 
 @router.put("/documents/{document_id}/verify")
