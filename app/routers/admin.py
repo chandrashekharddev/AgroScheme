@@ -300,7 +300,7 @@ async def create_application(
             detail=f"Failed to submit application: {str(e)}"
         )
 
-@router.get("/applications")  # ✅ NO trailing slash
+@router.get("/applications")
 async def get_all_applications_admin(
     skip: int = 0,
     limit: int = 100,
@@ -308,161 +308,71 @@ async def get_all_applications_admin(
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all applications with filters - ENHANCED VERSION"""
+    """Get all applications with filters"""
     try:
-        print("="*50)
-        print(f"📋 GET /admin/applications called")
-        print(f"   Params: skip={skip}, limit={limit}, status={status}, search={search}")
+        query = db.query(Application)
         
-        # Build query with eager loading
-        query = db.query(Application).options(
-            db.joinedload(Application.user),
-            db.joinedload(Application.scheme)
-        )
-        
-        # Apply status filter
         if status:
-            valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed", "completed"]
+            valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed"]
             if status not in valid_statuses:
-                return JSONResponse({
-                    "success": False,
-                    "error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}",
-                    "applications": []
-                })
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
+                )
             query = query.filter(Application.status == status)
         
-        # Get total count first
-        total_count = query.count()
-        print(f"📊 Total applications in DB (with filters): {total_count}")
-        
-        # Get applications with order
         applications = query.order_by(Application.applied_at.desc()).offset(skip).limit(limit).all()
-        
-        print(f"✅ Found {len(applications)} applications in this batch")
         
         result = []
         for app in applications:
-            try:
-                # Safely get status string
-                status_value = app.status
-                if hasattr(status_value, 'value'):
-                    status_value = status_value.value
-                
-                # Safely get user data
-                user_data = None
-                if app.user:
-                    user_data = {
-                        "id": app.user.id,
-                        "farmer_id": app.user.farmer_id,
-                        "full_name": app.user.full_name or "Unknown",
-                        "mobile_number": app.user.mobile_number,
-                        "email": app.user.email,
-                        "state": app.user.state,
-                        "district": app.user.district
-                    }
-                else:
-                    # Try to get user from database if not loaded
-                    if app.user_id:
-                        user = db.query(User).filter(User.id == app.user_id).first()
-                        if user:
-                            user_data = {
-                                "id": user.id,
-                                "farmer_id": user.farmer_id,
-                                "full_name": user.full_name or "Unknown",
-                                "mobile_number": user.mobile_number,
-                                "email": user.email,
-                                "state": user.state,
-                                "district": user.district
-                            }
-                
-                # Safely get scheme data
-                scheme_data = None
-                if app.scheme:
-                    scheme_data = {
-                        "id": app.scheme.id,
-                        "scheme_name": app.scheme.scheme_name or "Unknown",
-                        "scheme_code": app.scheme.scheme_code,
-                        "benefit_amount": float(app.scheme.benefit_amount) if app.scheme.benefit_amount else 0,
-                        "scheme_type": app.scheme.scheme_type.value if hasattr(app.scheme.scheme_type, 'value') else app.scheme.scheme_type
-                    }
-                else:
-                    # Try to get scheme from database if not loaded
-                    if app.scheme_id:
-                        scheme = db.query(GovernmentScheme).filter(GovernmentScheme.id == app.scheme_id).first()
-                        if scheme:
-                            scheme_data = {
-                                "id": scheme.id,
-                                "scheme_name": scheme.scheme_name or "Unknown",
-                                "scheme_code": scheme.scheme_code,
-                                "benefit_amount": float(scheme.benefit_amount) if scheme.benefit_amount else 0,
-                                "scheme_type": scheme.scheme_type.value if hasattr(scheme.scheme_type, 'value') else scheme.scheme_type
-                            }
-                
-                app_data = {
-                    "id": app.id,
-                    "application_id": app.application_id or f"APP{app.id}",
-                    "status": status_value,
-                    "applied_amount": float(app.applied_amount) if app.applied_amount else 0,
-                    "approved_amount": float(app.approved_amount) if app.approved_amount else 0,
-                    "applied_at": app.applied_at.isoformat() if app.applied_at else None,
-                    "updated_at": app.updated_at.isoformat() if app.updated_at else None,
-                    "user_id": app.user_id,
-                    "scheme_id": app.scheme_id,
-                    "user": user_data,
-                    "scheme": scheme_data,
-                    "application_data": app.application_data or {}
-                }
-                
-                # Apply search filter if needed
-                if search and search.strip():
-                    search_lower = search.lower().strip()
-                    matches = False
-                    
-                    if app_data["application_id"] and search_lower in app_data["application_id"].lower():
-                        matches = True
-                    if app_data["user"] and app_data["user"]["full_name"] and search_lower in app_data["user"]["full_name"].lower():
-                        matches = True
-                    if app_data["scheme"] and app_data["scheme"]["scheme_name"] and search_lower in app_data["scheme"]["scheme_name"].lower():
-                        matches = True
-                    
-                    if not matches:
-                        continue
-                
-                result.append(app_data)
-                
-            except Exception as e:
-                print(f"⚠️ Error processing application {app.id}: {e}")
-                import traceback
-                traceback.print_exc()
-                continue
+            user = get_user_by_id(db, app.user_id)
+            scheme = get_scheme_by_id(db, app.scheme_id)
+            
+            app_data = {
+                "id": app.id,
+                "application_id": app.application_id,
+                "status": app.status.value if hasattr(app.status, 'value') else app.status,
+                "applied_amount": float(app.applied_amount) if app.applied_amount else 0,
+                "approved_amount": float(app.approved_amount) if app.approved_amount else 0,
+                "applied_at": app.applied_at.isoformat() if app.applied_at else None,
+                "updated_at": app.updated_at.isoformat() if app.updated_at else None,
+                "user": {
+                    "id": user.id if user else None,
+                    "farmer_id": user.farmer_id if user else None,
+                    "full_name": user.full_name if user else "Unknown",
+                    "mobile_number": user.mobile_number if user else None
+                } if user else None,
+                "scheme": {
+                    "id": scheme.id if scheme else None,
+                    "scheme_name": scheme.scheme_name if scheme else "Unknown",
+                    "scheme_code": scheme.scheme_code if scheme else None
+                } if scheme else None
+            }
+            
+            if search:
+                search_lower = search.lower()
+                matches = (
+                    (app_data["application_id"] and search_lower in app_data["application_id"].lower()) or
+                    (app_data["user"] and app_data["user"]["full_name"] and search_lower in app_data["user"]["full_name"].lower()) or
+                    (app_data["scheme"] and app_data["scheme"]["scheme_name"] and search_lower in app_data["scheme"]["scheme_name"].lower())
+                )
+                if not matches:
+                    continue
+            
+            result.append(app_data)
         
-        print(f"✅ Returning {len(result)} applications after processing")
-        
-        # ENSURE THE RESPONSE FORMAT MATCHES WHAT FRONTEND EXPECTS
-        response_data = {
+        return JSONResponse({
             "success": True,
             "count": len(result),
-            "applications": result,  # This is what frontend looks for
-            "total": total_count
-        }
-        
-        # Log the first application for debugging
-        if result and len(result) > 0:
-            print(f"📋 Sample application: ID={result[0]['id']}, Status={result[0]['status']}, Farmer={result[0]['user']['full_name'] if result[0]['user'] else 'None'}")
-        
-        return JSONResponse(response_data)
-        
-    except Exception as e:
-        print(f"❌ CRITICAL ERROR in get_all_applications_admin: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        # Return empty array with error info - but maintain the format frontend expects
-        return JSONResponse({
-            "success": False,
-            "error": str(e),
-            "applications": [],  # Empty array, not null
-            "count": 0
+            "applications": result
         })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch applications: {str(e)}"
+        )
 
 @router.get("/applications/{application_id}")
 async def get_application_details(
@@ -943,14 +853,12 @@ async def get_pending_documents(
             detail=f"Failed to fetch pending documents: {str(e)}"
         )
 
-# ==================== DOCUMENTS - FIXED WITH SUPABASE STORAGE ====================
-
 @router.get("/documents/{document_id}")
 async def get_document_details(
     document_id: int,
     db: Session = Depends(get_db)
 ):
-    """Get document details for verification with Supabase signed URL"""
+    """Get document details for verification"""
     try:
         document = get_document_by_id(db, document_id)
         if not document:
@@ -961,17 +869,6 @@ async def get_document_details(
         
         user = get_user_by_id(db, document.user_id)
         
-        # ✅ GENERATE SIGNED URL FROM SUPABASE STORAGE
-        file_url = None
-        if document.file_path:
-            try:
-                from app.supabase_storage import supabase_storage
-                # Generate signed URL with 1 hour expiry
-                file_url = await supabase_storage.get_document_url(document.file_path)
-            except Exception as e:
-                print(f"⚠️ Failed to generate signed URL: {e}")
-                # Fallback to null - frontend will show placeholder
-        
         return JSONResponse({
             "success": True,
             "document": {
@@ -980,7 +877,6 @@ async def get_document_details(
                 "file_name": document.file_name,
                 "file_path": document.file_path,
                 "file_size": document.file_size,
-                "file_url": file_url,  # ✅ Now returns Supabase signed URL
                 "uploaded_at": document.uploaded_at.isoformat() if document.uploaded_at else None,
                 "verified": document.verified,
                 "verification_date": document.verification_date.isoformat() if document.verification_date else None,
@@ -991,90 +887,16 @@ async def get_document_details(
                     "full_name": user.full_name if user else "Unknown",
                     "mobile_number": user.mobile_number if user else None,
                     "email": user.email if user else None
-                } if user else None
+                } if user else None,
+                "file_url": f"/uploads/user_{document.user_id}/{document.file_name}" if document.file_path else None
             }
         })
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Error fetching document details: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch document details: {str(e)}"
-        )
-
-@router.get("/documents")
-async def get_all_documents_admin(
-    skip: int = 0,
-    limit: int = 100,
-    verified: Optional[bool] = None,
-    search: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    """Get all documents with signed URLs (admin view)"""
-    try:
-        query = db.query(Document)
-        
-        if verified is not None:
-            query = query.filter(Document.verified == verified)
-        
-        documents = query.order_by(Document.uploaded_at.desc()).offset(skip).limit(limit).all()
-        
-        result = []
-        for doc in documents:
-            user = get_user_by_id(db, doc.user_id)
-            
-            # Generate signed URL for each document
-            file_url = None
-            if doc.file_path:
-                try:
-                    from app.supabase_storage import supabase_storage
-                    file_url = await supabase_storage.get_document_url(doc.file_path)
-                except Exception as e:
-                    print(f"⚠️ Failed to generate URL for doc {doc.id}: {e}")
-            
-            doc_data = {
-                "id": doc.id,
-                "document_type": doc.document_type.value if hasattr(doc.document_type, 'value') else doc.document_type,
-                "file_name": doc.file_name,
-                "file_path": doc.file_path,
-                "file_url": file_url,
-                "file_size": doc.file_size,
-                "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
-                "verified": doc.verified,
-                "verification_date": doc.verification_date.isoformat() if doc.verification_date else None,
-                "extracted_data": doc.extracted_data,
-                "user": {
-                    "id": user.id if user else None,
-                    "farmer_id": user.farmer_id if user else None,
-                    "full_name": user.full_name if user else "Unknown",
-                    "mobile_number": user.mobile_number if user else None
-                } if user else None
-            }
-            
-            # Apply search filter
-            if search:
-                search_lower = search.lower()
-                matches = (
-                    (doc_data["user"] and doc_data["user"]["full_name"] and search_lower in doc_data["user"]["full_name"].lower()) or
-                    (doc_data["document_type"] and search_lower in str(doc_data["document_type"]).lower()) or
-                    (doc.file_name and search_lower in doc.file_name.lower())
-                )
-                if not matches:
-                    continue
-            
-            result.append(doc_data)
-        
-        return JSONResponse({
-            "success": True,
-            "count": len(result),
-            "documents": result
-        })
-    except Exception as e:
-        print(f"❌ Error fetching documents: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch documents: {str(e)}"
         )
 
 @router.put("/documents/{document_id}/verify")
@@ -1328,3 +1150,5 @@ async def debug_users(db: Session = Depends(get_db)):
         })
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)})
+
+this is my admin.py
