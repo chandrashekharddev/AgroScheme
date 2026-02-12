@@ -1,6 +1,7 @@
+# app/routers/admin.py - COMPLETE JSON VERSION
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
-from sqlalchemy import func, extract  # ✅ CRITICAL: Add extract import!
+from sqlalchemy import func, extract
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from fastapi.responses import FileResponse, JSONResponse
@@ -15,13 +16,36 @@ from app.crud import (
     get_user_applications, get_user_documents
 )
 
-
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-# ✅ Admin dashboard page (PUBLIC)
+# ==================== PYDANTIC MODELS ====================
+
+class ApplicationCreate(BaseModel):
+    scheme_id: int
+    farmer_id: Optional[str] = None
+    farmer_name: Optional[str] = None
+    applied_amount: float = 0
+
+class ApplicationStatusUpdate(BaseModel):
+    status: str
+    approved_amount: Optional[float] = None
+    remarks: Optional[str] = None
+
+class DocumentVerifyRequest(BaseModel):
+    status: str  # "verified" or "rejected"
+    remarks: Optional[str] = None
+
+class NotificationMarkReadRequest(BaseModel):
+    notification_ids: List[int]
+
+class PromoteUserRequest(BaseModel):
+    user_id: int
+
+# ==================== STATIC PAGES ====================
+
 @router.get("/admin.html")
 async def serve_admin_page():
-    """Serve the admin HTML page (PUBLIC ACCESS)"""
+    """Serve the admin HTML page"""
     try:
         return FileResponse("static/admin.html")
     except FileNotFoundError:
@@ -30,11 +54,12 @@ async def serve_admin_page():
             detail="Admin page not found"
         )
 
-# ✅ Check admin status (PUBLIC - always returns admin)
+# ==================== ADMIN AUTH ====================
+
 @router.get("/check")
 async def check_admin_status():
-    """Check admin status (PUBLIC)"""
-    return {
+    """Check admin status"""
+    return JSONResponse({
         "success": True,
         "is_admin": True,
         "user": {
@@ -44,14 +69,14 @@ async def check_admin_status():
             "email": "admin@agroscheme.com",
             "role": "admin"
         }
-    }
+    })
 
-# ✅ Get admin dashboard statistics (PUBLIC)
+# ==================== DASHBOARD STATS ====================
+
 @router.get("/stats")
 async def get_stats(db: Session = Depends(get_db)):
-    """Get admin dashboard statistics (PUBLIC)"""
+    """Get admin dashboard statistics"""
     try:
-        # Calculate stats with proper Enum comparison
         total_farmers = db.query(func.count(User.id)).filter(User.role == UserRole.FARMER).scalar() or 0
         total_admins = db.query(func.count(User.id)).filter(User.role == UserRole.ADMIN).scalar() or 0
         total_applications = db.query(func.count(Application.id)).scalar() or 0
@@ -63,12 +88,11 @@ async def get_stats(db: Session = Depends(get_db)):
             Document.verified == False
         ).scalar() or 0
         
-        # Get pending applications
         pending_applications = db.query(func.count(Application.id)).filter(
             Application.status == "pending"
         ).scalar() or 0
         
-        return {
+        return JSONResponse({
             "success": True,
             "total_farmers": total_farmers,
             "total_admins": total_admins,
@@ -80,19 +104,17 @@ async def get_stats(db: Session = Depends(get_db)):
             "ai_accuracy": 98.5,
             "admin_name": "Administrator",
             "admin_role": "admin"
-        }
+        })
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch stats: {str(e)}"
         )
 
-# ✅ Get comprehensive dashboard statistics (PUBLIC)
-@router.get("/dashboard-stats", response_model=AdminDashboardStats)
+@router.get("/dashboard-stats")
 async def get_dashboard_stats(db: Session = Depends(get_db)):
-    """Get comprehensive dashboard statistics (PUBLIC)"""
+    """Get comprehensive dashboard statistics"""
     try:
-        # Get basic stats
         total_farmers = db.query(func.count(User.id)).filter(User.role == UserRole.FARMER).scalar() or 0
         total_applications = db.query(func.count(Application.id)).scalar() or 0
         total_schemes = db.query(func.count(GovernmentScheme.id)).scalar() or 0
@@ -103,7 +125,6 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
             Document.verified == False
         ).scalar() or 0
         
-        # Get recent registrations
         recent_users = db.query(User)\
             .filter(User.role == UserRole.FARMER)\
             .order_by(User.created_at.desc())\
@@ -116,12 +137,11 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
                 "full_name": user.full_name,
                 "mobile_number": user.mobile_number,
                 "state": user.state,
-                "created_at": user.created_at
+                "created_at": user.created_at.isoformat() if user.created_at else None
             }
             for user in recent_users
         ]
         
-        # Get top schemes
         top_schemes = db.query(
             GovernmentScheme.scheme_name,
             func.count(Application.id).label('application_count'),
@@ -141,8 +161,8 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
             for scheme in top_schemes
         ]
         
-        # Combine all stats
-        result = {
+        return JSONResponse({
+            "success": True,
             "total_farmers": total_farmers,
             "total_applications": total_applications,
             "total_schemes": total_schemes,
@@ -156,9 +176,7 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
             "accuracy_growth": 2.1,
             "recent_registrations": recent_registrations,
             "top_schemes": top_schemes_list
-        }
-        
-        return result
+        })
         
     except Exception as e:
         print(f"Error in get_dashboard_stats: {e}")
@@ -167,19 +185,15 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
             detail=f"Failed to fetch dashboard stats: {str(e)}"
         )
 
-class ApplicationCreate(BaseModel):
-    scheme_id: int
-    farmer_id: Optional[str] = None
-    farmer_name: Optional[str] = None
-    applied_amount: float = 0
+# ==================== APPLICATIONS ====================
 
 @router.post("/applications")
 async def create_application(
     request: Request,
-    application: ApplicationCreate,  # ✅ Accept JSON body
+    application: ApplicationCreate,
     db: Session = Depends(get_db)
 ):
-    """Submit a new application (PUBLIC) - FIXED for JSON"""
+    """Submit a new application - JSON ONLY"""
     origin = request.headers.get("origin", "")
     
     try:
@@ -204,7 +218,6 @@ async def create_application(
                 detail=f"Farmer not found"
             )
         
-        # Get scheme
         scheme = get_scheme_by_id(db, application.scheme_id)
         if not scheme:
             raise HTTPException(
@@ -212,8 +225,6 @@ async def create_application(
                 detail=f"Scheme not found"
             )
         
-        # Generate application ID
-        from sqlalchemy import extract
         current_year = datetime.utcnow().year
         app_count = db.query(func.count(Application.id)).filter(
             extract('year', Application.applied_at) == current_year
@@ -221,21 +232,28 @@ async def create_application(
         
         application_id = f"APP{current_year}{str(app_count + 1).zfill(5)}"
         
-        # Create application
         new_application = Application(
             application_id=application_id,
             user_id=user.id,
             scheme_id=scheme.id,
             applied_amount=application.applied_amount,
             status="pending",
+            applied_at=datetime.utcnow(),
             application_data={
                 "farmer_id": user.farmer_id,
                 "farmer_name": user.full_name,
                 "scheme_name": scheme.scheme_name,
                 "scheme_code": scheme.scheme_code,
+                "applied_amount": application.applied_amount,
                 "applied_at": datetime.utcnow().isoformat(),
                 "applied_via": "farmer_portal"
-            }
+            },
+            submitted_documents=[],
+            status_history=[{
+                "status": "pending",
+                "timestamp": datetime.utcnow().isoformat(),
+                "note": "Application submitted by farmer"
+            }]
         )
         
         db.add(new_application)
@@ -244,14 +262,15 @@ async def create_application(
         
         print(f"✅✅✅ APPLICATION SAVED! ID: {new_application.id}")
         
-        # Create notification
         notification = Notification(
             user_id=user.id,
             title="Application Submitted",
             message=f"Your application for {scheme.scheme_name} has been submitted",
             notification_type="application",
             related_scheme_id=scheme.id,
-            related_application_id=new_application.id
+            related_application_id=new_application.id,
+            read=False,
+            created_at=datetime.utcnow()
         )
         db.add(notification)
         db.commit()
@@ -260,6 +279,7 @@ async def create_application(
             "success": True,
             "message": "Application submitted successfully",
             "application_id": application_id,
+            "application_db_id": new_application.id,
             "status": "pending"
         })
         
@@ -279,177 +299,19 @@ async def create_application(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to submit application: {str(e)}"
         )
-        
-# ✅ Add a new government scheme (PUBLIC)
-@router.post("/schemes", response_model=SchemeResponse)
-async def add_scheme(scheme: SchemeCreate, db: Session = Depends(get_db)):
-    """Add a new government scheme (PUBLIC)"""
-    try:
-        # Check if scheme code already exists
-        existing_scheme = get_scheme_by_code(db, scheme.scheme_code)
-        if existing_scheme:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Scheme with code '{scheme.scheme_code}' already exists"
-            )
-        
-        return create_scheme(db=db, scheme=scheme, created_by="Administrator")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add scheme: {str(e)}"
-        )
 
-# ✅ Get all registered farmers/users (PUBLIC)
-@router.get("/users", response_model=List[UserResponse])
-async def get_all_users(
-    skip: int = 0,
-    limit: int = 100,
-    search: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    """Get all registered farmers/users (PUBLIC)"""
-    try:
-        # Get all farmers
-        farmers = db.query(User).filter(User.role == UserRole.FARMER).offset(skip).limit(limit).all()
-        
-        # Apply search filter if provided
-        if search:
-            search = search.lower()
-            farmers = [
-                farmer for farmer in farmers
-                if (search in farmer.full_name.lower() or
-                    (farmer.farmer_id and search in farmer.farmer_id.lower()) or
-                    search in farmer.mobile_number.lower() or
-                    (farmer.email and search in farmer.email.lower()))
-            ]
-        
-        return farmers
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch users: {str(e)}"
-        )
-
-# ✅ Get recent user registrations (PUBLIC)
-@router.get("/users/recent")
-async def get_recent_users(limit: int = 5, db: Session = Depends(get_db)):
-    """Get recent user registrations (PUBLIC)"""
-    try:
-        recent_users = db.query(User)\
-            .filter(User.role == UserRole.FARMER)\
-            .order_by(User.created_at.desc())\
-            .limit(limit)\
-            .all()
-        
-        return [
-            {
-                "id": user.id,
-                "farmer_id": user.farmer_id,
-                "full_name": user.full_name,
-                "mobile_number": user.mobile_number,
-                "email": user.email,
-                "state": user.state,
-                "created_at": user.created_at
-            }
-            for user in recent_users
-        ]
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch recent users: {str(e)}"
-        )
-
-# ✅ Get detailed information about a specific user (PUBLIC)
-@router.get("/users/{user_id}")
-async def get_user_details(user_id: int, db: Session = Depends(get_db)):
-    """Get detailed information about a specific user (PUBLIC)"""
-    try:
-        user = get_user_by_id(db, user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        # Get user's applications
-        applications = get_user_applications(db, user_id)
-        
-        # Get user's documents
-        documents = get_user_documents(db, user_id)
-        
-        return {
-            "success": True,
-            "user": {
-                "id": user.id,
-                "farmer_id": user.farmer_id,
-                "full_name": user.full_name,
-                "mobile_number": user.mobile_number,
-                "email": user.email,
-                "state": user.state,
-                "district": user.district,
-                "village": user.village,
-                "total_land_acres": user.total_land_acres,
-                "annual_income": user.annual_income,
-                "land_type": user.land_type,
-                "main_crops": user.main_crops,
-                "bank_account_number": user.bank_account_number,
-                "ifsc_code": user.ifsc_code,
-                "created_at": user.created_at,
-                "role": user.role.value
-            },
-            "applications": [
-                {
-                    "id": app.id,
-                    "application_id": app.application_id,
-                    "status": app.status.value if hasattr(app.status, 'value') else app.status,
-                    "applied_amount": app.applied_amount,
-                    "approved_amount": app.approved_amount,
-                    "applied_at": app.applied_at
-                }
-                for app in applications
-            ],
-            "documents": [
-                {
-                    "id": doc.id,
-                    "document_type": doc.document_type.value if hasattr(doc.document_type, 'value') else doc.document_type,
-                    "file_name": doc.file_name,
-                    "verified": doc.verified,
-                    "uploaded_at": doc.uploaded_at
-                }
-                for doc in documents
-            ],
-            "stats": {
-                "total_applications": len(applications),
-                "total_verified_documents": len([d for d in documents if d.verified]),
-                "approved_applications": len([a for a in applications if a.status == "approved"])
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch user details: {str(e)}"
-        )
-
-# ✅ Get all applications with filters (PUBLIC)
 @router.get("/applications")
 async def get_all_applications_admin(
     skip: int = 0,
     limit: int = 100,
-    status: Optional[str] = None,
+    status: Optional[str] = Query(None, description="Filter by status"),
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all applications with filters (PUBLIC)"""
+    """Get all applications with filters"""
     try:
-        # Build query
         query = db.query(Application)
         
-        # Apply status filter
         if status:
             valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed"]
             if status not in valid_statuses:
@@ -459,24 +321,21 @@ async def get_all_applications_admin(
                 )
             query = query.filter(Application.status == status)
         
-        applications = query.offset(skip).limit(limit).all()
+        applications = query.order_by(Application.applied_at.desc()).offset(skip).limit(limit).all()
         
         result = []
         for app in applications:
-            # Get user details
             user = get_user_by_id(db, app.user_id)
-            
-            # Get scheme details
             scheme = get_scheme_by_id(db, app.scheme_id)
             
             app_data = {
                 "id": app.id,
                 "application_id": app.application_id,
                 "status": app.status.value if hasattr(app.status, 'value') else app.status,
-                "applied_amount": app.applied_amount,
-                "approved_amount": app.approved_amount,
-                "applied_at": app.applied_at,
-                "updated_at": app.updated_at,
+                "applied_amount": float(app.applied_amount) if app.applied_amount else 0,
+                "approved_amount": float(app.approved_amount) if app.approved_amount else 0,
+                "applied_at": app.applied_at.isoformat() if app.applied_at else None,
+                "updated_at": app.updated_at.isoformat() if app.updated_at else None,
                 "user": {
                     "id": user.id if user else None,
                     "farmer_id": user.farmer_id if user else None,
@@ -490,7 +349,6 @@ async def get_all_applications_admin(
                 } if scheme else None
             }
             
-            # Apply search filter
             if search:
                 search_lower = search.lower()
                 matches = (
@@ -503,21 +361,25 @@ async def get_all_applications_admin(
             
             result.append(app_data)
         
-        return {
+        return JSONResponse({
             "success": True,
             "count": len(result),
             "applications": result
-        }
+        })
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch applications: {str(e)}"
         )
 
-# ✅ Get detailed application information (PUBLIC)
 @router.get("/applications/{application_id}")
-async def get_application_details(application_id: int, db: Session = Depends(get_db)):
-    """Get detailed application information (PUBLIC)"""
+async def get_application_details(
+    application_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get detailed application information"""
     try:
         application = get_application_by_id(db, application_id)
         if not application:
@@ -526,25 +388,20 @@ async def get_application_details(application_id: int, db: Session = Depends(get
                 detail="Application not found"
             )
         
-        # Get user details
         user = get_user_by_id(db, application.user_id)
-        
-        # Get scheme details
         scheme = get_scheme_by_id(db, application.scheme_id)
-        
-        # Get application data
         app_data = application.application_data or {}
         
-        return {
+        return JSONResponse({
             "success": True,
             "application": {
                 "id": application.id,
                 "application_id": application.application_id,
                 "status": application.status.value if hasattr(application.status, 'value') else application.status,
-                "applied_amount": application.applied_amount,
-                "approved_amount": application.approved_amount,
-                "applied_at": application.applied_at,
-                "updated_at": application.updated_at,
+                "applied_amount": float(application.applied_amount) if application.applied_amount else 0,
+                "approved_amount": float(application.approved_amount) if application.approved_amount else 0,
+                "applied_at": application.applied_at.isoformat() if application.applied_at else None,
+                "updated_at": application.updated_at.isoformat() if application.updated_at else None,
                 "status_history": application.status_history,
                 "user": {
                     "id": user.id if user else None,
@@ -567,7 +424,7 @@ async def get_application_details(application_id: int, db: Session = Depends(get
                 } if scheme else None,
                 "application_data": app_data
             }
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:
@@ -576,55 +433,55 @@ async def get_application_details(application_id: int, db: Session = Depends(get
             detail=f"Failed to fetch application details: {str(e)}"
         )
 
-# ✅ Update application status (PUBLIC)
 @router.put("/applications/{application_id}/status")
 async def update_application_status_admin(
     application_id: int,
-    status: str,
-    approved_amount: Optional[float] = None,
-    remarks: Optional[str] = None,
+    status_update: ApplicationStatusUpdate,
     db: Session = Depends(get_db)
 ):
-    """Update application status (PUBLIC)"""
+    """Update application status - JSON ONLY"""
     try:
-        # Validate status
         valid_statuses = ["pending", "under_review", "approved", "rejected", "completed", "docs_needed"]
-        if status not in valid_statuses:
+        if status_update.status not in valid_statuses:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
             )
         
-        # Update application status
-        application = update_application_status(db, application_id, status, approved_amount)
+        application = update_application_status(
+            db, 
+            application_id, 
+            status_update.status, 
+            status_update.approved_amount
+        )
+        
         if not application:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Application not found"
             )
         
-        # Add remarks to application data if provided
-        if remarks:
+        if status_update.remarks:
             app_data = application.application_data or {}
             if "admin_remarks" not in app_data:
                 app_data["admin_remarks"] = []
             app_data["admin_remarks"].append({
-                "remarks": remarks,
+                "remarks": status_update.remarks,
                 "admin": "Administrator",
                 "timestamp": datetime.utcnow().isoformat()
             })
             application.application_data = app_data
             db.commit()
         
-        return {
+        return JSONResponse({
             "success": True,
-            "message": f"Application status updated to {status}",
+            "message": f"Application status updated to {status_update.status}",
             "application_id": application_id,
-            "new_status": status,
-            "approved_amount": approved_amount,
-            "updated_at": application.updated_at,
+            "new_status": status_update.status,
+            "approved_amount": status_update.approved_amount,
+            "updated_at": application.updated_at.isoformat() if application.updated_at else None,
             "admin": "Administrator"
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:
@@ -633,7 +490,31 @@ async def update_application_status_admin(
             detail=f"Failed to update application status: {str(e)}"
         )
 
-# ✅ Get all schemes (PUBLIC)
+# ==================== SCHEMES ====================
+
+@router.post("/schemes", response_model=SchemeResponse)
+async def add_scheme(
+    scheme: SchemeCreate,
+    db: Session = Depends(get_db)
+):
+    """Add a new government scheme"""
+    try:
+        existing_scheme = get_scheme_by_code(db, scheme.scheme_code)
+        if existing_scheme:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Scheme with code '{scheme.scheme_code}' already exists"
+            )
+        
+        return create_scheme(db=db, scheme=scheme, created_by="Administrator")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add scheme: {str(e)}"
+        )
+
 @router.get("/schemes", response_model=List[SchemeResponse])
 async def get_all_schemes_admin(
     active_only: bool = False,
@@ -642,11 +523,10 @@ async def get_all_schemes_admin(
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all schemes (admin version - shows all including inactive) (PUBLIC)"""
+    """Get all schemes (admin version)"""
     try:
         schemes = get_all_schemes(db, skip, limit, active_only)
         
-        # Apply search filter if provided
         if search:
             search = search.lower()
             schemes = [
@@ -663,12 +543,13 @@ async def get_all_schemes_admin(
             detail=f"Failed to fetch schemes: {str(e)}"
         )
 
-# ✅ Get top schemes by number of applications (PUBLIC)
 @router.get("/schemes/top")
-async def get_top_schemes(limit: int = 5, db: Session = Depends(get_db)):
-    """Get top schemes by number of applications (PUBLIC)"""
+async def get_top_schemes(
+    limit: int = 5,
+    db: Session = Depends(get_db)
+):
+    """Get top schemes by number of applications"""
     try:
-        # Query to get top schemes
         top_schemes = db.query(
             GovernmentScheme.scheme_name,
             func.count(Application.id).label('application_count'),
@@ -688,17 +569,232 @@ async def get_top_schemes(limit: int = 5, db: Session = Depends(get_db)):
             for scheme in top_schemes
         ]
         
-        return {
+        return JSONResponse({
             "success": True,
             "top_schemes": result
-        }
+        })
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch top schemes: {str(e)}"
         )
 
-# ✅ Get all pending documents for verification (PUBLIC)
+@router.delete("/schemes/{scheme_id}")
+async def delete_scheme(
+    scheme_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete or deactivate a scheme"""
+    try:
+        scheme = get_scheme_by_id(db, scheme_id)
+        if not scheme:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Scheme not found"
+            )
+        
+        applications_count = db.query(func.count(Application.id))\
+            .filter(Application.scheme_id == scheme_id)\
+            .scalar() or 0
+        
+        if applications_count > 0:
+            scheme.is_active = False
+            db.commit()
+            return JSONResponse({
+                "success": True,
+                "message": "Scheme has applications. Deactivated instead of deleted.",
+                "scheme_id": scheme_id,
+                "deactivated": True,
+                "applications_count": applications_count
+            })
+        else:
+            db.delete(scheme)
+            db.commit()
+            return JSONResponse({
+                "success": True,
+                "message": "Scheme deleted successfully",
+                "scheme_id": scheme_id,
+                "deleted": True
+            })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete scheme: {str(e)}"
+        )
+
+# ==================== USERS ====================
+
+@router.get("/users", response_model=List[UserResponse])
+async def get_all_users(
+    skip: int = 0,
+    limit: int = 100,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Get all registered farmers/users"""
+    try:
+        farmers = db.query(User).filter(User.role == UserRole.FARMER).offset(skip).limit(limit).all()
+        
+        if search:
+            search = search.lower()
+            farmers = [
+                farmer for farmer in farmers
+                if (search in farmer.full_name.lower() or
+                    (farmer.farmer_id and search in farmer.farmer_id.lower()) or
+                    search in farmer.mobile_number.lower() or
+                    (farmer.email and search in farmer.email.lower()))
+            ]
+        
+        return farmers
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch users: {str(e)}"
+        )
+
+@router.get("/users/recent")
+async def get_recent_users(
+    limit: int = 5,
+    db: Session = Depends(get_db)
+):
+    """Get recent user registrations"""
+    try:
+        recent_users = db.query(User)\
+            .filter(User.role == UserRole.FARMER)\
+            .order_by(User.created_at.desc())\
+            .limit(limit)\
+            .all()
+        
+        return JSONResponse([
+            {
+                "id": user.id,
+                "farmer_id": user.farmer_id,
+                "full_name": user.full_name,
+                "mobile_number": user.mobile_number,
+                "email": user.email,
+                "state": user.state,
+                "created_at": user.created_at.isoformat() if user.created_at else None
+            }
+            for user in recent_users
+        ])
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch recent users: {str(e)}"
+        )
+
+@router.get("/users/{user_id}")
+async def get_user_details(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get detailed information about a specific user"""
+    try:
+        user = get_user_by_id(db, user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        applications = get_user_applications(db, user_id)
+        documents = get_user_documents(db, user_id)
+        
+        return JSONResponse({
+            "success": True,
+            "user": {
+                "id": user.id,
+                "farmer_id": user.farmer_id,
+                "full_name": user.full_name,
+                "mobile_number": user.mobile_number,
+                "email": user.email,
+                "state": user.state,
+                "district": user.district,
+                "village": user.village,
+                "total_land_acres": float(user.total_land_acres) if user.total_land_acres else None,
+                "annual_income": float(user.annual_income) if user.annual_income else None,
+                "land_type": user.land_type,
+                "main_crops": user.main_crops,
+                "bank_account_number": user.bank_account_number,
+                "ifsc_code": user.ifsc_code,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
+                "role": user.role.value
+            },
+            "applications": [
+                {
+                    "id": app.id,
+                    "application_id": app.application_id,
+                    "status": app.status.value if hasattr(app.status, 'value') else app.status,
+                    "applied_amount": float(app.applied_amount) if app.applied_amount else 0,
+                    "approved_amount": float(app.approved_amount) if app.approved_amount else 0,
+                    "applied_at": app.applied_at.isoformat() if app.applied_at else None
+                }
+                for app in applications
+            ],
+            "documents": [
+                {
+                    "id": doc.id,
+                    "document_type": doc.document_type.value if hasattr(doc.document_type, 'value') else doc.document_type,
+                    "file_name": doc.file_name,
+                    "verified": doc.verified,
+                    "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None
+                }
+                for doc in documents
+            ],
+            "stats": {
+                "total_applications": len(applications),
+                "total_verified_documents": len([d for d in documents if d.verified]),
+                "approved_applications": len([a for a in applications if a.status == "approved"])
+            }
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch user details: {str(e)}"
+        )
+
+@router.post("/users/{user_id}/promote")
+async def promote_to_admin(
+    user_id: int,
+    db: Session = Depends(get_db)
+):
+    """Promote a user to admin role"""
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        if user.role == UserRole.ADMIN:
+            raise HTTPException(status_code=400, detail="User is already admin")
+        
+        user.role = UserRole.ADMIN
+        db.commit()
+        db.refresh(user)
+        
+        return JSONResponse({
+            "success": True,
+            "message": f"User {user.full_name} promoted to admin",
+            "user": {
+                "id": user.id,
+                "name": user.full_name,
+                "mobile": user.mobile_number,
+                "role": user.role.value
+            }
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to promote user: {str(e)}"
+        )
+
+# ==================== DOCUMENTS ====================
+
 @router.get("/documents/pending")
 async def get_pending_documents(
     skip: int = 0,
@@ -706,7 +802,7 @@ async def get_pending_documents(
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all pending documents for verification (PUBLIC)"""
+    """Get all pending documents for verification"""
     try:
         documents = db.query(Document)\
             .filter(Document.verified == False)\
@@ -716,7 +812,6 @@ async def get_pending_documents(
         
         result = []
         for doc in documents:
-            # Get user details
             user = get_user_by_id(db, doc.user_id)
             
             doc_data = {
@@ -724,9 +819,9 @@ async def get_pending_documents(
                 "document_type": doc.document_type.value if hasattr(doc.document_type, 'value') else doc.document_type,
                 "file_name": doc.file_name,
                 "file_path": doc.file_path,
-                "uploaded_at": doc.uploaded_at,
+                "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
                 "verified": doc.verified,
-                "verification_date": doc.verification_date,
+                "verification_date": doc.verification_date.isoformat() if doc.verification_date else None,
                 "extracted_data": doc.extracted_data,
                 "user": {
                     "id": user.id if user else None,
@@ -736,7 +831,6 @@ async def get_pending_documents(
                 } if user else None
             }
             
-            # Apply search filter
             if search:
                 search_lower = search.lower()
                 matches = (
@@ -748,21 +842,23 @@ async def get_pending_documents(
             
             result.append(doc_data)
         
-        return {
+        return JSONResponse({
             "success": True,
             "count": len(result),
             "pending_documents": result
-        }
+        })
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch pending documents: {str(e)}"
         )
 
-# ✅ Get document details for verification (PUBLIC)
 @router.get("/documents/{document_id}")
-async def get_document_details(document_id: int, db: Session = Depends(get_db)):
-    """Get document details for verification (PUBLIC)"""
+async def get_document_details(
+    document_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get document details for verification"""
     try:
         document = get_document_by_id(db, document_id)
         if not document:
@@ -771,10 +867,9 @@ async def get_document_details(document_id: int, db: Session = Depends(get_db)):
                 detail="Document not found"
             )
         
-        # Get user details
         user = get_user_by_id(db, document.user_id)
         
-        return {
+        return JSONResponse({
             "success": True,
             "document": {
                 "id": document.id,
@@ -782,9 +877,9 @@ async def get_document_details(document_id: int, db: Session = Depends(get_db)):
                 "file_name": document.file_name,
                 "file_path": document.file_path,
                 "file_size": document.file_size,
-                "uploaded_at": document.uploaded_at,
+                "uploaded_at": document.uploaded_at.isoformat() if document.uploaded_at else None,
                 "verified": document.verified,
-                "verification_date": document.verification_date,
+                "verification_date": document.verification_date.isoformat() if document.verification_date else None,
                 "extracted_data": document.extracted_data,
                 "user": {
                     "id": user.id if user else None,
@@ -795,7 +890,7 @@ async def get_document_details(document_id: int, db: Session = Depends(get_db)):
                 } if user else None,
                 "file_url": f"/uploads/user_{document.user_id}/{document.file_name}" if document.file_path else None
             }
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:
@@ -804,41 +899,44 @@ async def get_document_details(document_id: int, db: Session = Depends(get_db)):
             detail=f"Failed to fetch document details: {str(e)}"
         )
 
-# ✅ Verify or reject a document (PUBLIC)
 @router.put("/documents/{document_id}/verify")
 async def verify_document_admin_endpoint(
     document_id: int,
-    status: str,  # "verified" or "rejected"
-    remarks: Optional[str] = None,
+    verify_request: DocumentVerifyRequest,
     db: Session = Depends(get_db)
 ):
-    """Verify or reject a document (PUBLIC)"""
+    """Verify or reject a document - JSON ONLY"""
     try:
-        if status not in ["verified", "rejected"]:
+        if verify_request.status not in ["verified", "rejected"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Status must be 'verified' or 'rejected'"
             )
         
-        verified = status == "verified"
+        verified = verify_request.status == "verified"
         
-        # Verify document using crud function
-        document = update_document_verification(db, document_id, verified, {"admin_remarks": remarks} if remarks else None)
+        document = update_document_verification(
+            db, 
+            document_id, 
+            verified, 
+            {"admin_remarks": verify_request.remarks} if verify_request.remarks else None
+        )
+        
         if not document:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Document not found"
             )
         
-        return {
+        return JSONResponse({
             "success": True,
             "message": f"Document {'verified' if verified else 'rejected'} successfully",
             "document_id": document_id,
-            "status": status,
+            "status": verify_request.status,
             "verified": verified,
-            "verification_date": document.verification_date,
+            "verification_date": document.verification_date.isoformat() if document.verification_date else None,
             "admin": "Administrator"
-        }
+        })
     except HTTPException:
         raise
     except Exception as e:
@@ -847,16 +945,16 @@ async def verify_document_admin_endpoint(
             detail=f"Failed to verify document: {str(e)}"
         )
 
-# ✅ Get admin notifications (system-wide) (PUBLIC)
+# ==================== NOTIFICATIONS ====================
+
 @router.get("/notifications")
 async def get_admin_notifications(
     unread_only: bool = False,
     limit: int = 20,
     db: Session = Depends(get_db)
 ):
-    """Get admin notifications (system-wide) (PUBLIC)"""
+    """Get admin notifications"""
     try:
-        # Get system notifications
         query = db.query(Notification)\
             .order_by(Notification.created_at.desc())
         
@@ -867,7 +965,6 @@ async def get_admin_notifications(
         
         result = []
         for notif in notifications:
-            # Get user details for user-specific notifications
             user = None
             if notif.user_id:
                 user = get_user_by_id(db, notif.user_id)
@@ -878,7 +975,7 @@ async def get_admin_notifications(
                 "message": notif.message,
                 "notification_type": notif.notification_type,
                 "read": notif.read,
-                "created_at": notif.created_at,
+                "created_at": notif.created_at.isoformat() if notif.created_at else None,
                 "user": {
                     "id": user.id if user else None,
                     "full_name": user.full_name if user else None,
@@ -886,50 +983,52 @@ async def get_admin_notifications(
                 } if user else None
             })
         
-        return {
+        return JSONResponse({
             "success": True,
             "notifications": result
-        }
+        })
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch notifications: {str(e)}"
         )
 
-# ✅ Mark notifications as read (PUBLIC)
 @router.post("/notifications/mark-read")
 async def mark_notifications_read(
-    notification_ids: List[int],
+    mark_request: NotificationMarkReadRequest,
     db: Session = Depends(get_db)
 ):
-    """Mark notifications as read (PUBLIC)"""
+    """Mark notifications as read - JSON ONLY"""
     try:
         updated = []
-        for notif_id in notification_ids:
+        for notif_id in mark_request.notification_ids:
             notification = mark_notification_as_read(db, notif_id)
             if notification:
                 updated.append(notif_id)
         
-        return {
+        return JSONResponse({
             "success": True,
             "message": f"Marked {len(updated)} notifications as read",
             "updated_ids": updated
-        }
+        })
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to mark notifications as read: {str(e)}"
         )
 
-# ✅ Generate admin reports (PUBLIC)
+# ==================== REPORTS ====================
+
 @router.get("/reports/generate")
-async def generate_report(period: str = "30", db: Session = Depends(get_db)):
-    """Generate admin reports (PUBLIC)"""
+async def generate_report(
+    period: str = "30",
+    db: Session = Depends(get_db)
+):
+    """Generate admin reports"""
     try:
         days = int(period)
         start_date = datetime.utcnow() - timedelta(days=days)
         
-        # Get statistics for the period
         total_applications = db.query(func.count(Application.id))\
             .filter(Application.applied_at >= start_date)\
             .scalar() or 0
@@ -949,7 +1048,6 @@ async def generate_report(period: str = "30", db: Session = Depends(get_db)):
             .filter(User.role == UserRole.FARMER)\
             .scalar() or 0
         
-        # Get applications by status
         status_distribution = {}
         status_counts = db.query(Application.status, func.count(Application.id))\
             .filter(Application.applied_at >= start_date)\
@@ -960,39 +1058,31 @@ async def generate_report(period: str = "30", db: Session = Depends(get_db)):
             status_key = status.value if hasattr(status, 'value') else status
             status_distribution[status_key] = count
         
-        # Get applications trend (last 7 days)
         if days <= 7:
             trend_labels = []
             trend_data = []
-            
             for i in range(days):
                 day = start_date + timedelta(days=i)
                 day_end = day + timedelta(days=1)
-                
                 day_count = db.query(func.count(Application.id))\
                     .filter(Application.applied_at >= day)\
                     .filter(Application.applied_at < day_end)\
                     .scalar() or 0
-                
                 trend_labels.append(day.strftime("%d-%b"))
                 trend_data.append(day_count)
         else:
-            # Weekly aggregation for longer periods
             trend_labels = ["Week 1", "Week 2", "Week 3", "Week 4"]
             trend_data = [0, 0, 0, 0]
-            
             for i in range(4):
                 week_start = start_date + timedelta(weeks=i)
                 week_end = week_start + timedelta(weeks=1)
-                
                 week_count = db.query(func.count(Application.id))\
                     .filter(Application.applied_at >= week_start)\
                     .filter(Application.applied_at < week_end)\
                     .scalar() or 0
-                
                 trend_data[i] = week_count
         
-        return {
+        return JSONResponse({
             "success": True,
             "period_days": days,
             "start_date": start_date.isoformat(),
@@ -1007,91 +1097,56 @@ async def generate_report(period: str = "30", db: Session = Depends(get_db)):
                 "labels": trend_labels,
                 "data": trend_data
             }
-        }
+        })
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate report: {str(e)}"
         )
 
-# ✅ Delete or deactivate a scheme (PUBLIC)
-@router.delete("/schemes/{scheme_id}")
-async def delete_scheme(scheme_id: int, db: Session = Depends(get_db)):
-    """Delete a scheme (PUBLIC)"""
-    try:
-        scheme = get_scheme_by_id(db, scheme_id)
-        if not scheme:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Scheme not found"
-            )
-        
-        # Check if scheme has applications
-        applications_count = db.query(func.count(Application.id))\
-            .filter(Application.scheme_id == scheme_id)\
-            .scalar() or 0
-        
-        if applications_count > 0:
-            # Don't delete, just deactivate
-            scheme.is_active = False
-            db.commit()
-            
-            return {
-                "success": True,
-                "message": "Scheme has applications. Deactivated instead of deleted.",
-                "scheme_id": scheme_id,
-                "deactivated": True,
-                "applications_count": applications_count
-            }
-        else:
-            # Delete the scheme
-            db.delete(scheme)
-            db.commit()
-            
-            return {
-                "success": True,
-                "message": "Scheme deleted successfully",
-                "scheme_id": scheme_id,
-                "deleted": True
-            }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to delete scheme: {str(e)}"
-        )
+# ==================== DEBUG ENDPOINTS ====================
 
-# ✅ Make a user admin (PUBLIC)
-@router.post("/users/{user_id}/promote")
-async def promote_to_admin(user_id: int, db: Session = Depends(get_db)):
-    """Promote a user to admin role (PUBLIC)"""
+@router.get("/debug/applications")
+async def debug_applications(db: Session = Depends(get_db)):
+    """Debug endpoint to check applications"""
     try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        if user.role == UserRole.ADMIN:
-            raise HTTPException(status_code=400, detail="User is already admin")
-        
-        user.role = UserRole.ADMIN
-        db.commit()
-        db.refresh(user)
-        
-        return {
+        applications = db.query(Application).all()
+        return JSONResponse({
             "success": True,
-            "message": f"User {user.full_name} promoted to admin",
-            "user": {
-                "id": user.id,
-                "name": user.full_name,
-                "mobile": user.mobile_number,
-                "role": user.role.value
-            }
-        }
-    except HTTPException:
-        raise
+            "count": len(applications),
+            "applications": [
+                {
+                    "id": a.id,
+                    "application_id": a.application_id,
+                    "user_id": a.user_id,
+                    "scheme_id": a.scheme_id,
+                    "status": a.status.value if hasattr(a.status, 'value') else a.status,
+                    "applied_at": a.applied_at.isoformat() if a.applied_at else None
+                }
+                for a in applications
+            ]
+        })
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to promote user: {str(e)}"
-        )
+        return JSONResponse({"success": False, "error": str(e)})
+
+@router.get("/debug/users")
+async def debug_users(db: Session = Depends(get_db)):
+    """Debug endpoint to check users"""
+    try:
+        users = db.query(User).all()
+        return JSONResponse({
+            "success": True,
+            "count": len(users),
+            "users": [
+                {
+                    "id": u.id,
+                    "farmer_id": u.farmer_id,
+                    "full_name": u.full_name,
+                    "mobile_number": u.mobile_number,
+                    "role": u.role.value if hasattr(u.role, 'value') else u.role
+                }
+                for u in users
+            ]
+        })
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)})
