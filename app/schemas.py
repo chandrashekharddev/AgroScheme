@@ -73,6 +73,7 @@ class UserLogin(BaseModel):
     mobile_number: str
     password: str
 
+# app/schemas.py - UserUpdate schema
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -90,7 +91,9 @@ class UserUpdate(BaseModel):
     auto_apply_enabled: Optional[bool] = None
     email_notifications: Optional[bool] = None
     sms_notifications: Optional[bool] = None
-
+    
+    class Config:
+        from_attributes = True
 class UserResponse(UserBase):
     id: int
     farmer_id: str
