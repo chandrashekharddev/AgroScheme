@@ -81,21 +81,35 @@ def create_user(db: Session, user: UserCreate) -> User:
         db.rollback()
         raise e
 
+# app/crud.py - FIXED update_user function
 def update_user(db: Session, user_id: int, user_update: UserUpdate) -> Optional[User]:
+    """Update user profile with error handling"""
     db_user = get_user_by_id(db, user_id)
     if not db_user:
+        print(f"❌ User not found with ID: {user_id}")
         return None
     
     try:
         update_data = user_update.dict(exclude_unset=True)
+        print(f"📝 Updating user {user_id} with: {update_data}")
+        
         for field, value in update_data.items():
-            setattr(db_user, field, value)
+            if hasattr(db_user, field):
+                setattr(db_user, field, value)
+                print(f"  ✅ Set {field} = {value}")
+            else:
+                print(f"  ⚠️ Field {field} does not exist on User model")
         
         db.commit()
         db.refresh(db_user)
+        print(f"✅ User {user_id} updated successfully")
         return db_user
+        
     except Exception as e:
         db.rollback()
+        print(f"❌ Error updating user {user_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise e
 
 def authenticate_user(db: Session, mobile_number: str, password: str) -> Optional[User]:
