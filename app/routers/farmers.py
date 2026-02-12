@@ -1,11 +1,10 @@
-# app/routers/farmers.py - COMPLETE FIXED VERSION
+# app/routers/farmers.py - COMPLETE WITH SUPABASE STORAGE
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from datetime import datetime
 import os
-import shutil
-import uuid
 from pathlib import Path
 
 from app.database import get_db
@@ -16,12 +15,12 @@ from app.crud import (
     update_document_verification, get_all_schemes, get_scheme_by_id
 )
 from app.utils.auth_utils import get_current_user
-from app.ai_processor import document_processor
 from app.config import settings
+from app.supabase_storage import supabase_storage  # ✅ Supabase Storage
 
 router = APIRouter(prefix="/farmers", tags=["farmers"])
 
-# app/routers/farmers.py - FIXED get_current_user_info endpoint
+# ==================== GET CURRENT USER INFO ====================
 @router.get("/me")
 async def get_current_user_info(
     request: Request,
@@ -42,7 +41,7 @@ async def get_current_user_info(
                 detail="User not found"
             )
         
-        # ✅ FIX: Return a DICT, not the SQLAlchemy object
+        # Return a DICT, not the SQLAlchemy object
         user_data = {
             "id": user.id,
             "farmer_id": user.farmer_id,
@@ -86,8 +85,8 @@ async def get_current_user_info(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-        
-# app/routers/farmers.py - FIXED update_user endpoint
+
+# ==================== UPDATE USER PROFILE ====================
 @router.put("/me")
 async def update_user_info(
     request: Request,
@@ -108,7 +107,7 @@ async def update_user_info(
                 detail="User not found"
             )
         
-        # ✅ FIX: Return a DICT, not the SQLAlchemy object
+        # Return a DICT, not the SQLAlchemy object
         user_data = {
             "id": updated_user.id,
             "farmer_id": updated_user.farmer_id,
@@ -139,7 +138,7 @@ async def update_user_info(
         response = JSONResponse({
             "success": True,
             "message": "Profile updated successfully",
-            "user": user_data  # ✅ Send serializable dict, not SQLAlchemy object
+            "user": user_data
         })
         
         if origin and "vercel.app" in origin:
@@ -156,7 +155,8 @@ async def update_user_info(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to update profile: {str(e)}"
         )
-# app/routers/farmers.py - Update get_dashboard_stats
+
+# ==================== GET DASHBOARD STATS ====================
 @router.get("/dashboard-stats")
 async def get_dashboard_stats(
     request: Request,
@@ -180,7 +180,7 @@ async def get_dashboard_stats(
         # Calculate total benefits
         total_benefits = sum(app.approved_amount or 0 for app in approved_apps)
         
-        # ✅ FIX: Get eligible schemes count safely
+        # Get eligible schemes count safely
         try:
             all_schemes = get_all_schemes(db, active_only=True)
             eligible_count = min(len(all_schemes), 12)
@@ -230,6 +230,8 @@ async def get_dashboard_stats(
                 "total_applications": 0
             }
         })
+
+# ==================== GET MY APPLICATIONS ====================
 @router.get("/applications")
 async def get_my_applications(
     request: Request,
@@ -275,6 +277,7 @@ async def get_my_applications(
             "applications": []
         })
 
+# ==================== GET MY NOTIFICATIONS ====================
 @router.get("/notifications")
 async def get_my_notifications(
     request: Request,
@@ -316,6 +319,7 @@ async def get_my_notifications(
             "notifications": []
         })
 
+# ==================== MARK NOTIFICATION AS READ ====================
 @router.post("/notifications/{notification_id}/read")
 async def mark_notification_read(
     request: Request,
@@ -344,6 +348,7 @@ async def mark_notification_read(
     
     return response
 
+# ==================== UPLOAD DOCUMENT TO SUPABASE STORAGE ====================
 @router.post("/upload-document")
 async def upload_document(
     request: Request,
@@ -352,124 +357,113 @@ async def upload_document(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Upload a document for verification"""
+    """Upload document to Supabase Storage"""
     origin = request.headers.get("origin", "")
     
-    # Validate file size
-    file.file.seek(0, 2)
-    file_size = file.file.tell()
-    file.file.seek(0)
-    
-    if file_size > settings.MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File too large. Maximum size is {settings.MAX_FILE_SIZE // (1024*1024)}MB"
-        )
-    
-    # Validate file extension
-    file_ext = Path(file.filename).suffix.lower()
-    if file_ext not in settings.ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File type {file_ext} not allowed. Allowed: {settings.ALLOWED_EXTENSIONS}"
-        )
-    
-    # Create user-specific upload directory
-    user_upload_dir = Path(settings.UPLOAD_DIR) / str(current_user.id)
-    user_upload_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Generate unique filename
-    unique_filename = f"{uuid.uuid4()}{file_ext}"
-    file_path = user_upload_dir / unique_filename
-    
-    # Save the file
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # Read file content
+        file_content = await file.read()
+        file_size = len(file_content)
         
-        print(f"✅ File saved to: {file_path}")
-        print(f"✅ File size: {file_path.stat().st_size} bytes")
+        # Validate file size (10MB limit)
+        if file_size > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File too large. Maximum size is 10MB"
+            )
         
+        # Validate file extension
+        file_ext = Path(file.filename).suffix.lower()
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.pdf', '.heic', '.heif'}
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File type {file_ext} not allowed. Allowed: {allowed_extensions}"
+            )
+        
+        # ✅ UPLOAD TO SUPABASE STORAGE
+        storage_result = await supabase_storage.upload_document(
+            user_id=current_user.id,
+            document_type=document_type,
+            file_content=file_content,
+            filename=file.filename,
+            content_type=file.content_type or "application/octet-stream"
+        )
+        
+        if not storage_result["success"]:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Upload failed: {storage_result.get('error')}"
+            )
+        
+        # ✅ SAVE METADATA TO DATABASE
+        document_data = DocumentCreate(document_type=document_type)
+        
+        document = create_document(
+            db=db,
+            document=document_data,
+            user_id=current_user.id,
+            file_path=storage_result["file_path"],
+            file_name=file.filename,
+            file_size=storage_result["file_size"]
+        )
+        
+        # Update document with file_url
+        document.file_url = storage_result["file_url"]
+        db.commit()
+        
+        response = JSONResponse({
+            "success": True,
+            "message": "Document uploaded to Supabase Storage successfully",
+            "document_id": document.id,
+            "file_url": storage_result["file_url"],
+            "file_path": storage_result["file_path"],
+            "file_size": storage_result["file_size"],
+            "document_type": document_type
+        })
+        
+        if origin and "vercel.app" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        
+        return response
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"❌ Failed to save file: {str(e)}")
+        print(f"❌ Upload error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to save file: {str(e)}"
+            detail=f"Failed to upload document: {str(e)}"
         )
-    
-    # Create relative path for database
-    relative_path = f"{current_user.id}/{unique_filename}"
-    
-    # Create document in database
-    document_data = DocumentCreate(document_type=document_type)
-    
-    document = create_document(
-        db=db,
-        document=document_data,
-        user_id=current_user.id,
-        file_path=relative_path,
-        file_name=file.filename,
-        file_size=file_size
-    )
-    
-    # Process with AI (don't fail if AI processing fails)
-    extracted_data = {}
-    try:
-        extracted_data = await document_processor.extract_document_data(
-            document_type, str(file_path)
-        )
-        
-        update_document_verification(
-            db=db,
-            document_id=document.id,
-            verified=True,
-            extracted_data=extracted_data.get("extracted_data", {})
-        )
-        
-    except Exception as e:
-        print(f"⚠️ AI processing failed: {str(e)}")
-        # Still mark as verified
-        update_document_verification(
-            db=db,
-            document_id=document.id,
-            verified=True,
-            extracted_data={"error": str(e)}
-        )
-    
-    response = JSONResponse({
-        "success": True,
-        "message": "Document uploaded and processed successfully",
-        "document_id": document.id,
-        "file_url": f"/uploads/{relative_path}",
-        "extracted_data": extracted_data
-    })
-    
-    if origin and "vercel.app" in origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-    
-    return response
 
+# ==================== GET MY DOCUMENTS WITH SIGNED URLS ====================
 @router.get("/documents")
 async def get_my_documents(
     request: Request,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all documents for current farmer"""
+    """Get all documents for current farmer with signed URLs"""
     origin = request.headers.get("origin", "")
     
     documents = get_user_documents(db, current_user.id)
     result = []
     
     for doc in documents:
+        # Generate fresh signed URL (1 hour expiry)
+        file_url = await supabase_storage.get_document_url(doc.file_path)
+        
         result.append({
             "id": doc.id,
             "document_type": doc.document_type.value if hasattr(doc.document_type, 'value') else doc.document_type,
             "file_name": doc.file_name,
-            "file_url": f"/uploads/{doc.file_path}",
+            "file_url": file_url,  # ✅ Fresh signed URL from Supabase
             "file_size": doc.file_size,
             "verified": doc.verified,
+            "extracted_data": doc.extracted_data,
             "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None
         })
     
@@ -484,42 +478,99 @@ async def get_my_documents(
     
     return response
 
+# ==================== DEBUG UPLOADS (SUPABASE) ====================
 @router.get("/debug-uploads")
 async def debug_uploads(
     request: Request,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
 ):
-    """Debug endpoint to check uploaded files"""
+    """Debug endpoint to check uploaded files in Supabase"""
     origin = request.headers.get("origin", "")
     
-    user_upload_dir = Path(settings.UPLOAD_DIR) / str(current_user.id)
-    
-    if not user_upload_dir.exists():
-        return JSONResponse({
-            "message": "Upload directory does not exist",
-            "path": str(user_upload_dir)
-        })
-    
-    files = []
-    for file in user_upload_dir.iterdir():
-        if file.is_file():
+    try:
+        # Get documents from database
+        documents = get_user_documents(db, current_user.id)
+        
+        files = []
+        for doc in documents:
+            # Generate signed URL
+            file_url = await supabase_storage.get_document_url(doc.file_path)
             files.append({
-                "name": file.name,
-                "size": file.stat().st_size,
-                "path": str(file),
-                "relative_path": f"{current_user.id}/{file.name}"
+                "id": doc.id,
+                "name": doc.file_name,
+                "path": doc.file_path,
+                "url": file_url,
+                "size": doc.file_size,
+                "type": doc.document_type,
+                "verified": doc.verified,
+                "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None
             })
+        
+        response = JSONResponse({
+            "user_id": current_user.id,
+            "total_files": len(files),
+            "files": files
+        })
+        
+        if origin and "vercel.app" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        
+        return response
+        
+    except Exception as e:
+        print(f"❌ Debug uploads error: {str(e)}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        })
+
+# ==================== DELETE DOCUMENT ====================
+@router.delete("/documents/{document_id}")
+async def delete_document(
+    request: Request,
+    document_id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete document from Supabase Storage and database"""
+    origin = request.headers.get("origin", "")
     
-    response = JSONResponse({
-        "user_id": current_user.id,
-        "upload_dir": str(user_upload_dir),
-        "exists": user_upload_dir.exists(),
-        "files": files,
-        "total_files": len(files)
-    })
-    
-    if origin and "vercel.app" in origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-    
-    return response
+    try:
+        # Get document from database
+        document = db.query(Document).filter(
+            Document.id == document_id,
+            Document.user_id == current_user.id
+        ).first()
+        
+        if not document:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Document not found"
+            )
+        
+        # Delete from Supabase Storage
+        await supabase_storage.delete_document(document.file_path)
+        
+        # Delete from database
+        db.delete(document)
+        db.commit()
+        
+        response = JSONResponse({
+            "success": True,
+            "message": "Document deleted successfully"
+        })
+        
+        if origin and "vercel.app" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        
+        return response
+        
+    except Exception as e:
+        print(f"❌ Delete error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete document: {str(e)}"
+        )
