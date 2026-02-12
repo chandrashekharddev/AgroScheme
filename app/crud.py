@@ -97,13 +97,11 @@ def update_user(db: Session, user_id: int, user_update: UserUpdate) -> Optional[
             if hasattr(db_user, field):
                 setattr(db_user, field, value)
                 print(f"  ✅ Set {field} = {value}")
-            else:
-                print(f"  ⚠️ Field {field} does not exist on User model")
         
         db.commit()
         db.refresh(db_user)
         print(f"✅ User {user_id} updated successfully")
-        return db_user
+        return db_user  # Return the SQLAlchemy object - the endpoint will convert to dict
         
     except Exception as e:
         db.rollback()
