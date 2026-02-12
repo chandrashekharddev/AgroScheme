@@ -143,6 +143,7 @@ class SchemeBase(BaseModel):
     scheme_code: str
     description: str
     scheme_type: str  # ✅ Simple string, not enum
+    department: str = "Agriculture"
     benefit_amount: Optional[str] = None
     last_date: Optional[datetime] = None
     is_active: bool = True
