@@ -24,6 +24,7 @@ class ApplicationStatus(str, enum.Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     DOCS_NEEDED = "docs_needed"
+    COMPLETED = "completed"
 
 class User(Base):
     __tablename__ = "users"
