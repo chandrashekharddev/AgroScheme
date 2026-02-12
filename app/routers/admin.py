@@ -304,7 +304,7 @@ async def create_application(
 async def get_all_applications_admin(
     skip: int = 0,
     limit: int = 100,
-    status: Optional[str] = Query(None, description="Filter by status"),
+    status_filter: Optional[str] = Query(None, description="Filter by status"),  # ✅ Fixed
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
