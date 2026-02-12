@@ -4,7 +4,7 @@ from sqlalchemy import func, extract  # ✅ CRITICAL: Add extract import!
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from fastapi.responses import FileResponse, JSONResponse
-
+from pydantic import BaseModel
 from app.database import get_db
 from app.schemas import SchemeCreate, SchemeResponse, AdminStats, UserResponse, AdminDashboardStats
 from app.models import User, Document, Application, GovernmentScheme, Notification, UserRole
@@ -167,126 +167,102 @@ async def get_dashboard_stats(db: Session = Depends(get_db)):
             detail=f"Failed to fetch dashboard stats: {str(e)}"
         )
 
+class ApplicationCreate(BaseModel):
+    scheme_id: int
+    farmer_id: Optional[str] = None
+    farmer_name: Optional[str] = None
+    applied_amount: float = 0
+
 @router.post("/applications")
 async def create_application(
     request: Request,
-    scheme_id: int,
-    farmer_id: Optional[str] = None,
-    farmer_name: Optional[str] = None,
-    applied_amount: float = 0,
+    application: ApplicationCreate,  # ✅ Accept JSON body
     db: Session = Depends(get_db)
 ):
-    """Submit a new application (PUBLIC) - FIXED VERSION"""
+    """Submit a new application (PUBLIC) - FIXED for JSON"""
     origin = request.headers.get("origin", "")
     
     try:
         print("="*50)
         print(f"📝 CREATE APPLICATION CALLED")
-        print(f"   scheme_id: {scheme_id}")
-        print(f"   farmer_id: {farmer_id}")
-        print(f"   farmer_name: {farmer_name}")
-        print(f"   applied_amount: {applied_amount}")
+        print(f"   scheme_id: {application.scheme_id}")
+        print(f"   farmer_id: {application.farmer_id}")
+        print(f"   farmer_name: {application.farmer_name}")
+        print(f"   applied_amount: {application.applied_amount}")
         
         # Get user by farmer_id or find by name
         user = None
-        if farmer_id:
-            user = db.query(User).filter(User.farmer_id == farmer_id).first()
-            print(f"   User lookup by farmer_id: {'✅ Found' if user else '❌ Not found'}")
+        if application.farmer_id:
+            user = db.query(User).filter(User.farmer_id == application.farmer_id).first()
         
-        if not user and farmer_name:
-            user = db.query(User).filter(User.full_name.ilike(f"%{farmer_name}%")).first()
-            print(f"   User lookup by name: {'✅ Found' if user else '❌ Not found'}")
+        if not user and application.farmer_name:
+            user = db.query(User).filter(User.full_name.ilike(f"%{application.farmer_name}%")).first()
         
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Farmer not found with ID: {farmer_id or farmer_name}"
+                detail=f"Farmer not found"
             )
         
-        print(f"✅ User found: {user.full_name} (ID: {user.id}, Farmer ID: {user.farmer_id})")
-        
         # Get scheme
-        scheme = get_scheme_by_id(db, scheme_id)
+        scheme = get_scheme_by_id(db, application.scheme_id)
         if not scheme:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Scheme not found with ID: {scheme_id}"
+                detail=f"Scheme not found"
             )
         
-        print(f"✅ Scheme found: {scheme.scheme_name} (ID: {scheme.id})")
-        
         # Generate application ID
+        from sqlalchemy import extract
         current_year = datetime.utcnow().year
         app_count = db.query(func.count(Application.id)).filter(
             extract('year', Application.applied_at) == current_year
         ).scalar() or 0
         
         application_id = f"APP{current_year}{str(app_count + 1).zfill(5)}"
-        print(f"✅ Generated Application ID: {application_id}")
         
-        # Create application object with ALL required fields
+        # Create application
         new_application = Application(
             application_id=application_id,
             user_id=user.id,
             scheme_id=scheme.id,
-            applied_amount=applied_amount,
+            applied_amount=application.applied_amount,
             status="pending",
-            applied_at=datetime.utcnow(),
             application_data={
                 "farmer_id": user.farmer_id,
                 "farmer_name": user.full_name,
                 "scheme_name": scheme.scheme_name,
                 "scheme_code": scheme.scheme_code,
-                "applied_amount": applied_amount,
                 "applied_at": datetime.utcnow().isoformat(),
                 "applied_via": "farmer_portal"
-            },
-            submitted_documents=[],  # ✅ Add this
-            status_history=[        # ✅ Add this
-                {
-                    "status": "pending",
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "note": "Application submitted by farmer"
-                }
-            ]
+            }
         )
         
-        # Save to database
         db.add(new_application)
         db.commit()
         db.refresh(new_application)
         
-        print(f"✅✅✅ APPLICATION SAVED! ID: {new_application.id}, Application ID: {new_application.application_id}")
+        print(f"✅✅✅ APPLICATION SAVED! ID: {new_application.id}")
         
-        # Create notification for farmer
+        # Create notification
         notification = Notification(
             user_id=user.id,
             title="Application Submitted",
-            message=f"Your application for {scheme.scheme_name} has been submitted successfully. Application ID: {application_id}",
+            message=f"Your application for {scheme.scheme_name} has been submitted",
             notification_type="application",
             related_scheme_id=scheme.id,
-            related_application_id=new_application.id,
-            read=False,
-            created_at=datetime.utcnow()
+            related_application_id=new_application.id
         )
         db.add(notification)
         db.commit()
-        
-        print(f"✅ Notification created for user {user.id}")
         
         response = JSONResponse({
             "success": True,
             "message": "Application submitted successfully",
             "application_id": application_id,
-            "application_db_id": new_application.id,
-            "farmer_name": user.full_name,
-            "scheme_name": scheme.scheme_name,
-            "applied_amount": applied_amount,
-            "status": "pending",
-            "applied_at": new_application.applied_at.isoformat()
+            "status": "pending"
         })
         
-        # Set CORS headers
         if origin and "vercel.app" in origin:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -298,9 +274,7 @@ async def create_application(
         raise
     except Exception as e:
         db.rollback()
-        print(f"❌❌❌ ERROR creating application: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        print(f"❌ ERROR: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to submit application: {str(e)}"
