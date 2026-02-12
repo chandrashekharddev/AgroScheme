@@ -1,17 +1,18 @@
-# app/supabase_storage.py
+# app/supabase_storage.py - Use Service Role Key
 from supabase import create_client
 from app.config import settings
-from datetime import datetime, timedelta
+from datetime import datetime
 import uuid
 from typing import Optional, Dict, Any
 
 class SupabaseStorage:
     def __init__(self):
+        # ALWAYS use service role key for storage operations (bypasses RLS)
         self.supabase = create_client(
             settings.SUPABASE_URL,
-            settings.SUPABASE_KEY
+            settings.SUPABASE_SERVICE_KEY  # Use service key, not anon key
         )
-        self.bucket_name = "user-documents"  # Match your bucket name
+        self.bucket_name = "user-documents"
     
     async def upload_document(
         self,
@@ -21,11 +22,9 @@ class SupabaseStorage:
         filename: str,
         content_type: str
     ) -> Dict[str, Any]:
-        """
-        Upload document to Supabase Storage with organized folder structure
-        Path: user_{user_id}/{document_type}/{YYYY}/{MM}/{UUID}_{filename}
-        """
-        # Generate organized path
+        """Upload document to Supabase Storage using service role"""
+        
+        # Generate path
         now = datetime.utcnow()
         unique_id = str(uuid.uuid4())[:8]
         safe_filename = filename.replace(" ", "_").replace("(", "").replace(")", "")
@@ -38,14 +37,14 @@ class SupabaseStorage:
         )
         
         try:
-            # Upload to Supabase Storage
+            # Upload with service role (bypasses RLS)
             self.supabase.storage.from_(self.bucket_name).upload(
                 path=file_path,
                 file=file_content,
                 file_options={"content-type": content_type}
             )
             
-            # Generate signed URL for secure access (1 hour expiry)
+            # Generate signed URL
             signed_url = self.supabase.storage.from_(self.bucket_name).create_signed_url(
                 path=file_path,
                 expires_in=3600
@@ -67,7 +66,7 @@ class SupabaseStorage:
             }
     
     async def get_document_url(self, file_path: str, expires_in: int = 3600) -> Optional[str]:
-        """Get signed URL for document access"""
+        """Get signed URL using service role"""
         try:
             response = self.supabase.storage.from_(self.bucket_name).create_signed_url(
                 path=file_path,
@@ -77,14 +76,5 @@ class SupabaseStorage:
         except Exception as e:
             print(f"❌ Failed to get URL: {e}")
             return None
-    
-    async def delete_document(self, file_path: str) -> bool:
-        """Delete document from storage"""
-        try:
-            self.supabase.storage.from_(self.bucket_name).remove([file_path])
-            return True
-        except Exception as e:
-            print(f"❌ Failed to delete: {e}")
-            return False
 
 supabase_storage = SupabaseStorage()
