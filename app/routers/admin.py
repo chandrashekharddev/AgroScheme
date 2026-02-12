@@ -300,8 +300,6 @@ async def create_application(
             detail=f"Failed to submit application: {str(e)}"
         )
 
-# app/routers/admin.py - FIXED VERSION
-
 @router.get("/applications")  # ✅ NO trailing slash
 async def get_all_applications_admin(
     skip: int = 0,
@@ -310,18 +308,21 @@ async def get_all_applications_admin(
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all applications with filters - FIXED VERSION"""
+    """Get all applications with filters - ENHANCED VERSION"""
     try:
         print("="*50)
         print(f"📋 GET /admin/applications called")
         print(f"   Params: skip={skip}, limit={limit}, status={status}, search={search}")
         
-        # Build query
-        query = db.query(Application)
+        # Build query with eager loading
+        query = db.query(Application).options(
+            db.joinedload(Application.user),
+            db.joinedload(Application.scheme)
+        )
         
         # Apply status filter
         if status:
-            valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed"]
+            valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed", "completed"]
             if status not in valid_statuses:
                 return JSONResponse({
                     "success": False,
@@ -330,13 +331,14 @@ async def get_all_applications_admin(
                 })
             query = query.filter(Application.status == status)
         
-        # Get applications with eager loading of relationships
-        applications = query.options(
-            db.joinedload(Application.user),
-            db.joinedload(Application.scheme)
-        ).order_by(Application.applied_at.desc()).offset(skip).limit(limit).all()
+        # Get total count first
+        total_count = query.count()
+        print(f"📊 Total applications in DB (with filters): {total_count}")
         
-        print(f"✅ Found {len(applications)} applications in database")
+        # Get applications with order
+        applications = query.order_by(Application.applied_at.desc()).offset(skip).limit(limit).all()
+        
+        print(f"✅ Found {len(applications)} applications in this batch")
         
         result = []
         for app in applications:
@@ -346,6 +348,56 @@ async def get_all_applications_admin(
                 if hasattr(status_value, 'value'):
                     status_value = status_value.value
                 
+                # Safely get user data
+                user_data = None
+                if app.user:
+                    user_data = {
+                        "id": app.user.id,
+                        "farmer_id": app.user.farmer_id,
+                        "full_name": app.user.full_name or "Unknown",
+                        "mobile_number": app.user.mobile_number,
+                        "email": app.user.email,
+                        "state": app.user.state,
+                        "district": app.user.district
+                    }
+                else:
+                    # Try to get user from database if not loaded
+                    if app.user_id:
+                        user = db.query(User).filter(User.id == app.user_id).first()
+                        if user:
+                            user_data = {
+                                "id": user.id,
+                                "farmer_id": user.farmer_id,
+                                "full_name": user.full_name or "Unknown",
+                                "mobile_number": user.mobile_number,
+                                "email": user.email,
+                                "state": user.state,
+                                "district": user.district
+                            }
+                
+                # Safely get scheme data
+                scheme_data = None
+                if app.scheme:
+                    scheme_data = {
+                        "id": app.scheme.id,
+                        "scheme_name": app.scheme.scheme_name or "Unknown",
+                        "scheme_code": app.scheme.scheme_code,
+                        "benefit_amount": float(app.scheme.benefit_amount) if app.scheme.benefit_amount else 0,
+                        "scheme_type": app.scheme.scheme_type.value if hasattr(app.scheme.scheme_type, 'value') else app.scheme.scheme_type
+                    }
+                else:
+                    # Try to get scheme from database if not loaded
+                    if app.scheme_id:
+                        scheme = db.query(GovernmentScheme).filter(GovernmentScheme.id == app.scheme_id).first()
+                        if scheme:
+                            scheme_data = {
+                                "id": scheme.id,
+                                "scheme_name": scheme.scheme_name or "Unknown",
+                                "scheme_code": scheme.scheme_code,
+                                "benefit_amount": float(scheme.benefit_amount) if scheme.benefit_amount else 0,
+                                "scheme_type": scheme.scheme_type.value if hasattr(scheme.scheme_type, 'value') else scheme.scheme_type
+                            }
+                
                 app_data = {
                     "id": app.id,
                     "application_id": app.application_id or f"APP{app.id}",
@@ -354,22 +406,14 @@ async def get_all_applications_admin(
                     "approved_amount": float(app.approved_amount) if app.approved_amount else 0,
                     "applied_at": app.applied_at.isoformat() if app.applied_at else None,
                     "updated_at": app.updated_at.isoformat() if app.updated_at else None,
-                    "user": {
-                        "id": app.user.id if app.user else None,
-                        "farmer_id": app.user.farmer_id if app.user else None,
-                        "full_name": app.user.full_name if app.user else "Unknown",
-                        "mobile_number": app.user.mobile_number if app.user else None
-                    } if app.user else None,
-                    "scheme": {
-                        "id": app.scheme.id if app.scheme else None,
-                        "scheme_name": app.scheme.scheme_name if app.scheme else "Unknown",
-                        "scheme_code": app.scheme.scheme_code if app.scheme else None,
-                        "benefit_amount": float(app.scheme.benefit_amount) if app.scheme and app.scheme.benefit_amount else 0
-                    } if app.scheme else None,
+                    "user_id": app.user_id,
+                    "scheme_id": app.scheme_id,
+                    "user": user_data,
+                    "scheme": scheme_data,
                     "application_data": app.application_data or {}
                 }
                 
-                # Apply search filter
+                # Apply search filter if needed
                 if search and search.strip():
                     search_lower = search.lower().strip()
                     matches = False
@@ -388,27 +432,37 @@ async def get_all_applications_admin(
                 
             except Exception as e:
                 print(f"⚠️ Error processing application {app.id}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
         
-        print(f"✅ Returning {len(result)} applications")
+        print(f"✅ Returning {len(result)} applications after processing")
         
-        return JSONResponse({
+        # ENSURE THE RESPONSE FORMAT MATCHES WHAT FRONTEND EXPECTS
+        response_data = {
             "success": True,
             "count": len(result),
-            "applications": result
-        })
+            "applications": result,  # This is what frontend looks for
+            "total": total_count
+        }
+        
+        # Log the first application for debugging
+        if result and len(result) > 0:
+            print(f"📋 Sample application: ID={result[0]['id']}, Status={result[0]['status']}, Farmer={result[0]['user']['full_name'] if result[0]['user'] else 'None'}")
+        
+        return JSONResponse(response_data)
         
     except Exception as e:
         print(f"❌ CRITICAL ERROR in get_all_applications_admin: {str(e)}")
         import traceback
         traceback.print_exc()
-        # Return empty array with error info
+        # Return empty array with error info - but maintain the format frontend expects
         return JSONResponse({
             "success": False,
             "error": str(e),
-            "applications": []
+            "applications": [],  # Empty array, not null
+            "count": 0
         })
-
 
 @router.get("/applications/{application_id}")
 async def get_application_details(
