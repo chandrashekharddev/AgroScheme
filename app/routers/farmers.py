@@ -21,18 +21,18 @@ from app.config import settings
 
 router = APIRouter(prefix="/farmers", tags=["farmers"])
 
-# app/routers/farmers.py - Update the /me endpoint
+# app/routers/farmers.py - FIXED get_current_user_info endpoint
 @router.get("/me")
 async def get_current_user_info(
     request: Request,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get current logged-in farmer's profile"""
+    """Get current logged-in farmer's profile - FIXED JSON serialization"""
     try:
         origin = request.headers.get("origin", "")
         
-        # ✅ FIX: Refresh user from database to get latest data
+        # Refresh user from database
         from app.crud import get_user_by_id
         user = get_user_by_id(db, current_user.id)
         
@@ -42,37 +42,39 @@ async def get_current_user_info(
                 detail="User not found"
             )
         
-        print(f"📋 Returning user data for: {user.full_name} (Farmer ID: {user.farmer_id})")
+        # ✅ FIX: Return a DICT, not the SQLAlchemy object
+        user_data = {
+            "id": user.id,
+            "farmer_id": user.farmer_id,
+            "full_name": user.full_name,
+            "mobile_number": user.mobile_number,
+            "email": user.email,
+            "state": user.state,
+            "district": user.district,
+            "village": user.village,
+            "language": user.language or "en",
+            "total_land_acres": float(user.total_land_acres) if user.total_land_acres else 0,
+            "land_type": user.land_type,
+            "main_crops": user.main_crops,
+            "annual_income": float(user.annual_income) if user.annual_income else 0,
+            "bank_account_number": user.bank_account_number,
+            "bank_name": user.bank_name,
+            "ifsc_code": user.ifsc_code,
+            "bank_verified": user.bank_verified or False,
+            "aadhaar_number": user.aadhaar_number,
+            "pan_number": user.pan_number,
+            "auto_apply_enabled": user.auto_apply_enabled if user.auto_apply_enabled is not None else True,
+            "email_notifications": user.email_notifications if user.email_notifications is not None else True,
+            "sms_notifications": user.sms_notifications if user.sms_notifications is not None else True,
+            "role": user.role.value if hasattr(user.role, 'value') else user.role,
+            "created_at": user.created_at.isoformat() if user.created_at else None
+        }
         
         response = JSONResponse({
             "success": True,
-            "user": {
-                "id": user.id,
-                "farmer_id": user.farmer_id,  # ✅ Should be actual ID like AGRO12345678
-                "full_name": user.full_name,
-                "mobile_number": user.mobile_number,
-                "email": user.email,
-                "state": getattr(user, 'state', None),
-                "district": getattr(user, 'district', None),
-                "village": getattr(user, 'village', None),
-                "language": getattr(user, 'language', 'en'),
-                "total_land_acres": getattr(user, 'total_land_acres', None),
-                "land_type": getattr(user, 'land_type', None),
-                "main_crops": getattr(user, 'main_crops', None),
-                "annual_income": getattr(user, 'annual_income', None),
-                "bank_account_number": getattr(user, 'bank_account_number', None),
-                "bank_name": getattr(user, 'bank_name', None),
-                "ifsc_code": getattr(user, 'ifsc_code', None),
-                "bank_verified": getattr(user, 'bank_verified', False),
-                "aadhaar_number": getattr(user, 'aadhaar_number', None),
-                "pan_number": getattr(user, 'pan_number', None),
-                "auto_apply_enabled": getattr(user, 'auto_apply_enabled', True),
-                "role": user.role.value if hasattr(user.role, 'value') else user.role,
-                "created_at": user.created_at.isoformat() if user.created_at else None
-            }
+            "user": user_data
         })
         
-        # ✅ CORS headers for Vercel
         if origin and "vercel.app" in origin:
             response.headers["Access-Control-Allow-Origin"] = origin
             response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -84,7 +86,8 @@ async def get_current_user_info(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
+        
+# app/routers/farmers.py - FIXED update_user endpoint
 @router.put("/me")
 async def update_user_info(
     request: Request,
@@ -92,15 +95,51 @@ async def update_user_info(
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update current farmer's profile"""
+    """Update current farmer's profile - FIXED JSON serialization"""
     try:
         origin = request.headers.get("origin", "")
+        
+        # Update user in database
         updated_user = update_user(db, current_user.id, user_update)
+        
+        if not updated_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # ✅ FIX: Return a DICT, not the SQLAlchemy object
+        user_data = {
+            "id": updated_user.id,
+            "farmer_id": updated_user.farmer_id,
+            "full_name": updated_user.full_name,
+            "mobile_number": updated_user.mobile_number,
+            "email": updated_user.email,
+            "state": updated_user.state,
+            "district": updated_user.district,
+            "village": updated_user.village,
+            "language": updated_user.language or "en",
+            "total_land_acres": float(updated_user.total_land_acres) if updated_user.total_land_acres else 0,
+            "land_type": updated_user.land_type,
+            "main_crops": updated_user.main_crops,
+            "annual_income": float(updated_user.annual_income) if updated_user.annual_income else 0,
+            "bank_account_number": updated_user.bank_account_number,
+            "bank_name": updated_user.bank_name,
+            "ifsc_code": updated_user.ifsc_code,
+            "bank_verified": updated_user.bank_verified or False,
+            "aadhaar_number": updated_user.aadhaar_number,
+            "pan_number": updated_user.pan_number,
+            "auto_apply_enabled": updated_user.auto_apply_enabled if updated_user.auto_apply_enabled is not None else True,
+            "email_notifications": updated_user.email_notifications if updated_user.email_notifications is not None else True,
+            "sms_notifications": updated_user.sms_notifications if updated_user.sms_notifications is not None else True,
+            "role": updated_user.role.value if hasattr(updated_user.role, 'value') else updated_user.role,
+            "created_at": updated_user.created_at.isoformat() if updated_user.created_at else None
+        }
         
         response = JSONResponse({
             "success": True,
             "message": "Profile updated successfully",
-            "user": updated_user
+            "user": user_data  # ✅ Send serializable dict, not SQLAlchemy object
         })
         
         if origin and "vercel.app" in origin:
@@ -110,8 +149,13 @@ async def update_user_info(
         return response
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+        print(f"❌ Error updating profile: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update profile: {str(e)}"
+        )
 # app/routers/farmers.py - Update get_dashboard_stats
 @router.get("/dashboard-stats")
 async def get_dashboard_stats(
