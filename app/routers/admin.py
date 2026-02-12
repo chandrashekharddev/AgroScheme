@@ -300,8 +300,9 @@ async def create_application(
             detail=f"Failed to submit application: {str(e)}"
         )
 
-# app/routers/admin.py - FIXED get_all_applications_admin
-@router.get("/applications")
+# app/routers/admin.py - FIXED VERSION
+
+@router.get("/applications")  # ✅ NO trailing slash
 async def get_all_applications_admin(
     skip: int = 0,
     limit: int = 100,
@@ -309,7 +310,7 @@ async def get_all_applications_admin(
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all applications with filters - FIXED 500 ERROR"""
+    """Get all applications with filters - FIXED VERSION"""
     try:
         print("="*50)
         print(f"📋 GET /admin/applications called")
@@ -322,29 +323,24 @@ async def get_all_applications_admin(
         if status:
             valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed"]
             if status not in valid_statuses:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
-                )
+                return JSONResponse({
+                    "success": False,
+                    "error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}",
+                    "applications": []
+                })
             query = query.filter(Application.status == status)
         
-        # Get applications
-        applications = query.order_by(Application.applied_at.desc()).offset(skip).limit(limit).all()
+        # Get applications with eager loading of relationships
+        applications = query.options(
+            db.joinedload(Application.user),
+            db.joinedload(Application.scheme)
+        ).order_by(Application.applied_at.desc()).offset(skip).limit(limit).all()
+        
         print(f"✅ Found {len(applications)} applications in database")
         
         result = []
         for app in applications:
             try:
-                # Safely get user
-                user = None
-                if app.user_id:
-                    user = db.query(User).filter(User.id == app.user_id).first()
-                
-                # Safely get scheme
-                scheme = None
-                if app.scheme_id:
-                    scheme = db.query(GovernmentScheme).filter(GovernmentScheme.id == app.scheme_id).first()
-                
                 # Safely get status string
                 status_value = app.status
                 if hasattr(status_value, 'value'):
@@ -359,22 +355,25 @@ async def get_all_applications_admin(
                     "applied_at": app.applied_at.isoformat() if app.applied_at else None,
                     "updated_at": app.updated_at.isoformat() if app.updated_at else None,
                     "user": {
-                        "id": user.id if user else None,
-                        "farmer_id": user.farmer_id if user else None,
-                        "full_name": user.full_name if user else "Unknown",
-                        "mobile_number": user.mobile_number if user else None
-                    } if user else None,
+                        "id": app.user.id if app.user else None,
+                        "farmer_id": app.user.farmer_id if app.user else None,
+                        "full_name": app.user.full_name if app.user else "Unknown",
+                        "mobile_number": app.user.mobile_number if app.user else None
+                    } if app.user else None,
                     "scheme": {
-                        "id": scheme.id if scheme else None,
-                        "scheme_name": scheme.scheme_name if scheme else "Unknown",
-                        "scheme_code": scheme.scheme_code if scheme else None
-                    } if scheme else None
+                        "id": app.scheme.id if app.scheme else None,
+                        "scheme_name": app.scheme.scheme_name if app.scheme else "Unknown",
+                        "scheme_code": app.scheme.scheme_code if app.scheme else None,
+                        "benefit_amount": float(app.scheme.benefit_amount) if app.scheme and app.scheme.benefit_amount else 0
+                    } if app.scheme else None,
+                    "application_data": app.application_data or {}
                 }
                 
                 # Apply search filter
-                if search:
-                    search_lower = search.lower()
+                if search and search.strip():
+                    search_lower = search.lower().strip()
                     matches = False
+                    
                     if app_data["application_id"] and search_lower in app_data["application_id"].lower():
                         matches = True
                     if app_data["user"] and app_data["user"]["full_name"] and search_lower in app_data["user"]["full_name"].lower():
@@ -399,18 +398,18 @@ async def get_all_applications_admin(
             "applications": result
         })
         
-    except HTTPException:
-        raise
     except Exception as e:
         print(f"❌ CRITICAL ERROR in get_all_applications_admin: {str(e)}")
         import traceback
         traceback.print_exc()
-        # Return empty array instead of crashing
+        # Return empty array with error info
         return JSONResponse({
             "success": False,
             "error": str(e),
             "applications": []
         })
+
+
 @router.get("/applications/{application_id}")
 async def get_application_details(
     application_id: int,
