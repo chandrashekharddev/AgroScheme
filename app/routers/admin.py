@@ -301,26 +301,26 @@ async def create_application(
         )
 
 @router.get("/applications")
+@router.get("/applications")
 async def get_all_applications_admin(
     skip: int = 0,
     limit: int = 100,
-    status_filter: Optional[str] = Query(None, description="Filter by status"),  # ✅ Fixed
+    status_filter: Optional[str] = Query(None, description="Filter by status"),  # ✅ Fixed name
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all applications with filters"""
     try:
         query = db.query(Application)
         
-        if status:
+        if status_filter:  # ✅ USE status_filter, not status
             valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed"]
-            if status not in valid_statuses:
+            if status_filter not in valid_statuses:  # ✅ USE status_filter
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
                 )
-            query = query.filter(Application.status == status)
-        
+            query = query.filter(Application.status == status_filter)  # ✅ USE status_filter
+
         applications = query.order_by(Application.applied_at.desc()).offset(skip).limit(limit).all()
         
         result = []
