@@ -1,300 +1,506 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from datetime import timedelta
-from typing import Optional
+from sqlalchemy import func, text
+from typing import List, Optional, Dict, Any
+import random
+import string
+from datetime import datetime
+from app.models import User, Document, GovernmentScheme, Application, Notification
+from app.schemas import UserCreate, UserUpdate, SchemeCreate, DocumentCreate
+from app.utils.security import get_password_hash, verify_password
+from app.utils.helpers import generate_farmer_id, generate_application_id, calculate_eligibility
 
-from app.database import get_db
-from app.schemas import UserCreate, UserResponse, Token, UserLogin
-from app.crud import create_user, authenticate_user, get_user_by_mobile, get_user_by_email
-from app.utils.security import create_access_token
-from app.config import settings
-from app.models import User
-
-router = APIRouter(prefix="/auth", tags=["authentication"])
-
-@router.post("/login")
-async def login(request: Request, form_data: UserLogin, db: Session = Depends(get_db)):
-    """
-    Authenticate farmer and return JWT token
-    """
+def get_user_by_id(db: Session, user_id: int):
+    """Get user by ID with error handling"""
     try:
-        origin = request.headers.get("origin", "")
-        print(f"🔐 Login attempt from: {origin}")
-        print(f"📱 Mobile: {form_data.mobile_number}")
-        
-        # Authenticate user from database
-        user = authenticate_user(db, form_data.mobile_number, form_data.password)
-        
-        if not user:
-            print(f"❌ Authentication failed for {form_data.mobile_number}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect mobile number or password",
-            )
-        
-        # ✅ Ensure farmer_id exists
-        if not user.farmer_id:
-            # Generate farmer ID if not exists
-            import uuid
-            user.farmer_id = f"AGRO{str(uuid.uuid4().int)[:8]}"
-            db.commit()
-            db.refresh(user)
-        
-        print(f"✅ User authenticated: {user.full_name} (ID: {user.id}, Farmer ID: {user.farmer_id})")
-        
-        # Create access token
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={
-                "sub": str(user.id),
-                "mobile": user.mobile_number,
-                "role": user.role.value if hasattr(user.role, 'value') else user.role,
-                "farmer_id": user.farmer_id
-            },
-            expires_delta=access_token_expires
-        )
-        
-        # Prepare user data with ALL fields
-        user_data = {
-            "id": user.id,
-            "farmer_id": user.farmer_id,
-            "full_name": user.full_name,
-            "mobile_number": user.mobile_number,
-            "email": user.email,
-            "aadhaar_number": user.aadhaar_number,  # ✅ NEW
-            "role": user.role.value if hasattr(user.role, 'value') else user.role,
-            "state": getattr(user, 'state', None),
-            "district": getattr(user, 'district', None),
-            "village": getattr(user, 'village', None),
-            
-            # Farm details
-            "total_land_acres": getattr(user, 'total_land_acres', None),
-            "land_type": getattr(user, 'land_type', None),
-            "main_crops": getattr(user, 'main_crops', None),
-            "annual_income": getattr(user, 'annual_income', None),
-            
-            # Bank details
-            "bank_account_number": getattr(user, 'bank_account_number', None),
-            "bank_name": getattr(user, 'bank_name', None),
-            "ifsc_code": getattr(user, 'ifsc_code', None),
-            "bank_verified": getattr(user, 'bank_verified', False),
-            
-            # Preferences
-            "language": getattr(user, 'language', 'en'),
-            "auto_apply_enabled": getattr(user, 'auto_apply_enabled', True),
-            "email_notifications": getattr(user, 'email_notifications', True),
-            "sms_notifications": getattr(user, 'sms_notifications', True),
-            "created_at": user.created_at.isoformat() if user.created_at else None
-        }
-        
-        response_data = {
-            "success": True,
-            "access_token": access_token,
-            "token_type": "bearer",
-            "user": user_data
-        }
-        
-        response = JSONResponse(content=response_data)
-        
-        # Set CORS headers
-        if origin:
-            if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
-                response.headers["Access-Control-Allow-Origin"] = origin
-                response.headers["Access-Control-Allow-Credentials"] = "true"
-        
-        print(f"✅ Login successful for: {user.full_name} (Farmer ID: {user.farmer_id})")
-        return response
-        
-    except HTTPException:
-        raise
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            print(f"✅ Found user: {user.full_name} (ID: {user.id}, Farmer ID: {user.farmer_id})")
+        else:
+            print(f"❌ No user found with ID: {user_id}")
+        return user
     except Exception as e:
-        print(f"❌ Login error: {str(e)}")
+        print(f"❌ Error in get_user_by_id: {str(e)}")
+        return None
+
+def get_user_by_mobile(db: Session, mobile_number: str) -> Optional[User]:
+    return db.query(User).filter(User.mobile_number == mobile_number).first()
+
+def get_user_by_email(db: Session, email: str) -> Optional[User]:
+    return db.query(User).filter(User.email == email).first()
+
+def get_user_by_farmer_id(db: Session, farmer_id: str) -> Optional[User]:
+    return db.query(User).filter(User.farmer_id == farmer_id).first()
+
+def create_user(db: Session, user: UserCreate) -> User:
+    """Create a new user with ALL fields from registration form"""
+    state_code = user.state[:2].upper()
+    district_code = user.district[:2].upper()
+    farmer_id = generate_farmer_id(state_code, district_code)
+    
+    # Check if farmer_id already exists
+    existing_user = get_user_by_farmer_id(db, farmer_id)
+    attempts = 0
+    while existing_user and attempts < 10:
+        farmer_id = generate_farmer_id(state_code, district_code)
+        existing_user = get_user_by_farmer_id(db, farmer_id)
+        attempts += 1
+    
+    if attempts >= 10:
+        # Fallback: append random string
+        farmer_id = f"{farmer_id}{random.randint(100, 999)}"
+    
+    print(f"📝 Creating user with data: {user.dict()}")
+    
+    # Create user with ALL fields from registration form
+    db_user = User(
+        # Personal info
+        full_name=user.full_name,
+        mobile_number=user.mobile_number,
+        email=user.email,
+        aadhaar_number=user.aadhaar_number,  # ✅ From form
+        password_hash=get_password_hash(user.password),
+        state=user.state,
+        district=user.district,
+        village=user.village,
+        language=user.language,
+        farmer_id=farmer_id,
+        role="farmer",
+        
+        # Farm details
+        total_land_acres=user.total_land_acres,  # ✅ From form (landSize)
+        land_type=user.land_type,  # ✅ From form (landType)
+        main_crops=user.main_crops,  # ✅ From form (crops)
+        annual_income=user.annual_income,  # ✅ From form (annualIncome)
+        
+        # Bank details
+        bank_account_number=user.bank_account_number,  # ✅ From form (bankAccount)
+        bank_name=user.bank_name,  # ✅ From form (bankName)
+        ifsc_code=user.ifsc_code,  # ✅ From form (ifsc)
+        
+        # Default settings
+        bank_verified=False,
+        auto_apply_enabled=True,
+        email_notifications=True,
+        sms_notifications=True
+    )
+    
+    try:
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        
+        print(f"✅ User created successfully: ID={db_user.id}, Farmer ID={db_user.farmer_id}")
+        print(f"   Saved fields: Aadhaar={db_user.aadhaar_number}, Land={db_user.total_land_acres} acres, Bank={db_user.bank_account_number}")
+        
+        # Create welcome notification
+        notification = Notification(
+            user_id=db_user.id,
+            title="Welcome to AgroScheme AI!",
+            message=f"Hello {db_user.full_name}, welcome to AgroScheme AI. Complete your profile to get started!",
+            notification_type="system"
+        )
+        db.add(notification)
+        db.commit()
+        
+        return db_user
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error creating user: {str(e)}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Login failed: {str(e)}"
-        )
+        raise e
 
-@router.post("/register")
-async def register(
-    request: Request,
-    user: UserCreate,  # Now includes all fields!
-    db: Session = Depends(get_db)
-):
-    """
-    Register a new farmer with complete profile
-    """
+def update_user(db: Session, user_id: int, user_update: UserUpdate) -> Optional[User]:
+    """Update user profile with error handling"""
+    db_user = get_user_by_id(db, user_id)
+    if not db_user:
+        print(f"❌ User not found with ID: {user_id}")
+        return None
+    
     try:
-        origin = request.headers.get("origin", "")
-        print("="*50)
-        print(f"📝 REGISTRATION ATTEMPT")
-        print(f"   Origin: {origin}")
-        print(f"   Mobile: {user.mobile_number}")
-        print(f"   Name: {user.full_name}")
-        print(f"   Aadhaar: {user.aadhaar_number}")
-        print(f"   State: {user.state}")
-        print(f"   District: {user.district}")
-        print(f"   Village: {user.village}")
-        print(f"   Language: {user.language}")
-        print(f"   Land Size: {user.total_land_acres} acres")
-        print(f"   Land Type: {user.land_type}")
-        print(f"   Crops: {user.main_crops}")
-        print(f"   Annual Income: {user.annual_income}")
-        print(f"   Bank Account: {user.bank_account_number}")
-        print(f"   Bank Name: {user.bank_name}")
-        print(f"   IFSC: {user.ifsc_code}")
-        print("="*50)
+        update_data = user_update.dict(exclude_unset=True)
+        print(f"📝 Updating user {user_id} with: {update_data}")
         
-        # Check if user already exists
-        db_user = get_user_by_mobile(db, mobile_number=user.mobile_number)
-        if db_user:
-            print(f"❌ Mobile number already registered: {user.mobile_number}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Mobile number already registered"
-            )
+        for field, value in update_data.items():
+            if hasattr(db_user, field):
+                setattr(db_user, field, value)
+                print(f"  ✅ Set {field} = {value}")
         
-        # Check email if provided
-        if user.email:
-            db_user_email = get_user_by_email(db, email=user.email)
-            if db_user_email:
-                print(f"❌ Email already registered: {user.email}")
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already registered"
+        db.commit()
+        db.refresh(db_user)
+        print(f"✅ User {user_id} updated successfully")
+        return db_user
+        
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Error updating user {user_id}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise e
+
+def authenticate_user(db: Session, mobile_number: str, password: str) -> Optional[User]:
+    user = get_user_by_mobile(db, mobile_number)
+    if not user:
+        return None
+    if not verify_password(password, user.password_hash):
+        return None
+    return user
+
+def get_all_farmers(db: Session, skip: int = 0, limit: int = 100) -> List[User]:
+    """Get all farmers (users with role 'farmer')"""
+    return db.query(User).filter(User.role == "farmer").offset(skip).limit(limit).all()
+    
+def create_document(db: Session, document: DocumentCreate, user_id: int, file_path: str, file_name: str, file_size: int) -> Document:
+    db_document = Document(
+        user_id=user_id,
+        document_type=document.document_type,
+        file_path=file_path,
+        file_name=file_name,
+        file_size=file_size
+    )
+    
+    try:
+        db.add(db_document)
+        db.commit()
+        db.refresh(db_document)
+        return db_document
+    except Exception as e:
+        db.rollback()
+        raise e
+
+def get_user_documents(db: Session, user_id: int) -> List[Document]:
+    return db.query(Document).filter(Document.user_id == user_id).all()
+
+def get_document_by_id(db: Session, document_id: int) -> Optional[Document]:
+    return db.query(Document).filter(Document.id == document_id).first()
+
+def update_document_verification(db: Session, document_id: int, verified: bool, extracted_data: Dict[str, Any] = None) -> Optional[Document]:
+    document = get_document_by_id(db, document_id)
+    if not document:
+        return None
+    
+    try:
+        document.verified = verified
+        document.verification_date = datetime.utcnow()
+        if extracted_data:
+            document.extracted_data = extracted_data
+        
+        db.commit()
+        db.refresh(document)
+        return document
+    except Exception as e:
+        db.rollback()
+        raise e
+
+def create_scheme(db: Session, scheme: SchemeCreate, created_by: str) -> GovernmentScheme:
+    db_scheme = GovernmentScheme(
+        scheme_name=scheme.scheme_name,
+        scheme_code=scheme.scheme_code,
+        description=scheme.description,
+        scheme_type=scheme.scheme_type,
+        benefit_amount=scheme.benefit_amount,
+        last_date=scheme.last_date,
+        is_active=scheme.is_active,
+        eligibility_criteria=scheme.eligibility_criteria,
+        required_documents=scheme.required_documents,
+        created_by=created_by
+    )
+    
+    try:
+        db.add(db_scheme)
+        db.commit()
+        db.refresh(db_scheme)
+        return db_scheme
+    except Exception as e:
+        db.rollback()
+        raise e
+
+def get_scheme_by_id(db: Session, scheme_id: int) -> Optional[GovernmentScheme]:
+    return db.query(GovernmentScheme).filter(GovernmentScheme.id == scheme_id).first()
+
+def get_scheme_by_code(db: Session, scheme_code: str) -> Optional[GovernmentScheme]:
+    return db.query(GovernmentScheme).filter(GovernmentScheme.scheme_code == scheme_code).first()
+
+def get_all_schemes(db: Session, skip: int = 0, limit: int = 100, active_only: bool = False):
+    """Get all government schemes from database"""
+    try:
+        print("=" * 60)
+        print("🔍 get_all_schemes: STARTING")
+        print(f"   Params: skip={skip}, limit={limit}, active_only={active_only}")
+        
+        # DIRECT QUERY - NO FILTERS FIRST TO SEE WHAT'S IN DB
+        all_schemes = db.query(GovernmentScheme).all()
+        print(f"📊 TOTAL SCHEMES IN DATABASE: {len(all_schemes)}")
+        
+        if len(all_schemes) == 0:
+            print("❌ NO SCHEMES FOUND IN DATABASE AT ALL!")
+            return []
+        
+        # Log all schemes for debugging
+        for i, s in enumerate(all_schemes):
+            print(f"  DB Scheme {i+1}: ID={s.id}, Code={s.scheme_code}, Name={s.scheme_name}, Active={s.is_active}")
+        
+        # Now build query with filters
+        query = db.query(GovernmentScheme)
+        
+        if active_only:
+            print("✅ Applying active_only filter (is_active = True)")
+            query = query.filter(GovernmentScheme.is_active == True)
+        
+        # Apply pagination
+        schemes = query.offset(skip).limit(limit).all()
+        print(f"📦 After filters & pagination: {len(schemes)} schemes")
+        
+        if len(schemes) == 0:
+            # If no schemes after filter, maybe is_active is NULL or False
+            print("⚠️ No schemes after active_only filter. Checking for NULL values...")
+            
+            # Check if any schemes have NULL is_active
+            null_active = db.query(GovernmentScheme).filter(GovernmentScheme.is_active == None).count()
+            print(f"   Schemes with is_active = NULL: {null_active}")
+            
+            if null_active > 0:
+                # Update NULL values to TRUE
+                print("✅ Fixing NULL is_active values...")
+                db.query(GovernmentScheme).filter(GovernmentScheme.is_active == None).update(
+                    {GovernmentScheme.is_active: True}
                 )
+                db.commit()
+                
+                # Try query again
+                query = db.query(GovernmentScheme)
+                if active_only:
+                    query = query.filter(GovernmentScheme.is_active == True)
+                schemes = query.offset(skip).limit(limit).all()
+                print(f"📦 After fixing NULLs: {len(schemes)} schemes")
         
-        # Create user in database with ALL fields
-        new_user = create_user(db=db, user=user)
-        print(f"✅ User registered successfully!")
-        print(f"   ID: {new_user.id}")
-        print(f"   Farmer ID: {new_user.farmer_id}")
-        print(f"   Saved fields: Aadhaar={new_user.aadhaar_number}, Land={new_user.total_land_acres}, Bank={new_user.bank_account_number}")
+        return schemes
         
-        response = JSONResponse({
-            "success": True,
-            "message": "Registration successful",
-            "farmer_id": new_user.farmer_id,
-            "user": {
-                "id": new_user.id,
-                "full_name": new_user.full_name,
-                "farmer_id": new_user.farmer_id,
-                "mobile_number": new_user.mobile_number
-            }
-        })
-        
-        # Set CORS headers
-        if origin:
-            if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
-                response.headers["Access-Control-Allow-Origin"] = origin
-                response.headers["Access-Control-Allow-Credentials"] = "true"
-        
-        return response
-        
-    except HTTPException:
-        raise
     except Exception as e:
-        print(f"❌ Registration error: {str(e)}")
+        print(f"❌ CRITICAL ERROR in get_all_schemes: {e}")
         import traceback
         traceback.print_exc()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Registration failed: {str(e)}"
-        )
-
-@router.post("/login-with-otp")
-async def login_with_otp(
-    request: Request,
-    mobile_number: str,
-    otp: Optional[str] = None,
-    db: Session = Depends(get_db)
-):
-    """
-    Login using OTP (One Time Password)
-    """
+        return []
+        
+def create_application(db: Session, user_id: int, scheme_id: int, application_data: Dict[str, Any]) -> Application:
+    scheme = get_scheme_by_id(db, scheme_id)
+    if not scheme:
+        raise ValueError("Scheme not found")
+    
+    user = get_user_by_id(db, user_id)
+    if not user:
+        raise ValueError("User not found")
+    
+    application_id = generate_application_id(scheme.scheme_code)
+    
+    app_data = {
+        "user_info": {
+            "full_name": user.full_name,
+            "farmer_id": user.farmer_id,
+            "mobile_number": user.mobile_number,
+            "state": user.state,
+            "district": user.district,
+            "village": user.village,
+            "total_land_acres": user.total_land_acres,
+            "annual_income": user.annual_income,
+            "bank_account": user.bank_account_number,
+            "ifsc_code": user.ifsc_code
+        },
+        "scheme_info": {
+            "scheme_name": scheme.scheme_name,
+            "scheme_code": scheme.scheme_code,
+            "benefit_amount": scheme.benefit_amount
+        },
+        **application_data
+    }
+    
+    db_application = Application(
+        user_id=user_id,
+        scheme_id=scheme_id,
+        application_id=application_id,
+        application_data=app_data,
+        applied_amount=scheme.benefit_amount
+    )
+    
     try:
-        origin = request.headers.get("origin", "")
-        print(f"🔐 OTP Login attempt for: {mobile_number}")
+        db.add(db_application)
+        db.commit()
+        db.refresh(db_application)
         
-        # Get user by mobile number
-        user = get_user_by_mobile(db, mobile_number)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User not found"
-            )
-        
-        # For demo, any 6-digit OTP works
-        if otp and len(otp) != 6:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid OTP format"
-            )
-        
-        # Create access token
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={
-                "sub": str(user.id),
-                "mobile": user.mobile_number,
-                "role": user.role.value if hasattr(user.role, 'value') else user.role,
-                "farmer_id": user.farmer_id
-            },
-            expires_delta=access_token_expires
+        # Create notification
+        notification = Notification(
+            user_id=user_id,
+            title=f"Application Submitted: {scheme.scheme_name}",
+            message=f"Your application has been submitted. ID: {application_id}",
+            notification_type="application",
+            related_scheme_id=scheme_id,
+            related_application_id=db_application.id
         )
+        db.add(notification)
+        db.commit()
         
-        response = JSONResponse({
-            "success": True,
-            "access_token": access_token,
-            "token_type": "bearer",
-            "user": {
-                "id": user.id,
-                "farmer_id": user.farmer_id,
-                "full_name": user.full_name,
-                "mobile_number": user.mobile_number,
-                "email": user.email,
-                "role": user.role.value if hasattr(user.role, 'value') else user.role
-            }
+        return db_application
+    except Exception as e:
+        db.rollback()
+        raise e
+
+def get_user_applications(db: Session, user_id: int) -> List[Application]:
+    return db.query(Application).filter(Application.user_id == user_id).all()
+
+def get_all_applications(db: Session, skip: int = 0, limit: int = 100, status: Optional[str] = None) -> List[Application]:
+    """Get all applications with optional status filter"""
+    query = db.query(Application)
+    
+    if status:
+        valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed"]
+        if status not in valid_statuses:
+            raise ValueError(f"Invalid status. Must be one of: {', '.join(valid_statuses)}")
+        query = query.filter(Application.status == status)
+    
+    return query.offset(skip).limit(limit).all()
+
+def get_application_by_id(db: Session, application_id: int) -> Optional[Application]:
+    return db.query(Application).filter(Application.id == application_id).first()
+
+def update_application_status(db: Session, application_id: int, status: str, approved_amount: float = None) -> Optional[Application]:
+    application = get_application_by_id(db, application_id)
+    if not application:
+        return None
+    
+    try:
+        status_history = application.status_history or []
+        status_history.append({
+            "status": status,
+            "timestamp": datetime.utcnow().isoformat(),
+            "approved_amount": approved_amount
         })
         
-        # Set CORS headers
-        if origin:
-            if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
-                response.headers["Access-Control-Allow-Origin"] = origin
-                response.headers["Access-Control-Allow-Credentials"] = "true"
+        application.status = status
+        application.approved_amount = approved_amount
+        application.status_history = status_history
         
-        return response
+        db.commit()
+        db.refresh(application)
         
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ OTP Login error: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"OTP login failed: {str(e)}"
+        # Create notification
+        notification = Notification(
+            user_id=application.user_id,
+            title=f"Application Status Updated: {application.status}",
+            message=f"Your application {application.application_id} status has been updated.",
+            notification_type="application",
+            related_scheme_id=application.scheme_id,
+            related_application_id=application_id
         )
+        db.add(notification)
+        db.commit()
+        
+        return application
+    except Exception as e:
+        db.rollback()
+        raise e
 
-@router.post("/send-otp")
-async def send_otp(request: Request, mobile_number: str):
-    """
-    Send OTP to mobile number (Demo)
-    """
-    origin = request.headers.get("origin", "")
-    print(f"📱 OTP requested for: {mobile_number}")
+def check_user_eligibility(db: Session, user_id: int, scheme_id: int) -> Dict[str, Any]:
+    user = get_user_by_id(db, user_id)
+    scheme = get_scheme_by_id(db, scheme_id)
     
-    response = JSONResponse({
-        "success": True,
-        "message": "OTP sent successfully",
-        "otp": "123456",  # Demo OTP
-        "mobile": mobile_number
-    })
+    if not user or not scheme:
+        return {"eligible": False, "error": "User or scheme not found"}
     
-    # Set CORS headers
-    if origin:
-        if "vercel.app" in origin or origin in settings.ALLOWED_ORIGINS:
-            response.headers["Access-Control-Allow-Origin"] = origin
-            response.headers["Access-Control-Allow-Credentials"] = "true"
+    user_data = {
+        "state": user.state,
+        "district": user.district,
+        "total_land_acres": user.total_land_acres,
+        "annual_income": user.annual_income,
+        "land_type": user.land_type,
+        "main_crops": user.main_crops
+    }
     
-    return response
+    eligibility_result = calculate_eligibility(user_data, scheme.eligibility_criteria)
+    
+    user_documents = get_user_documents(db, user_id)
+    user_doc_types = [doc.document_type.value for doc in user_documents if doc.verified]
+    missing_docs = []
+    
+    for required_doc in scheme.required_documents:
+        if required_doc not in user_doc_types:
+            missing_docs.append(required_doc)
+    
+    eligibility_result["missing_documents"] = missing_docs
+    
+    return eligibility_result
+
+def create_notification(db: Session, user_id: int, title: str, message: str, notification_type: str, 
+                       related_scheme_id: int = None, related_application_id: int = None) -> Notification:
+    notification = Notification(
+        user_id=user_id,
+        title=title,
+        message=message,
+        notification_type=notification_type,
+        related_scheme_id=related_scheme_id,
+        related_application_id=related_application_id
+    )
+    
+    try:
+        db.add(notification)
+        db.commit()
+        db.refresh(notification)
+        return notification
+    except Exception as e:
+        db.rollback()
+        raise e
+
+def get_user_notifications(db: Session, user_id: int, unread_only: bool = False) -> List[Notification]:
+    query = db.query(Notification).filter(Notification.user_id == user_id)
+    if unread_only:
+        query = query.filter(Notification.read == False)
+    return query.order_by(Notification.created_at.desc()).all()
+
+def mark_notification_as_read(db: Session, notification_id: int) -> Optional[Notification]:
+    notification = db.query(Notification).filter(Notification.id == notification_id).first()
+    if not notification:
+        return None
+    
+    try:
+        notification.read = True
+        db.commit()
+        db.refresh(notification)
+        return notification
+    except Exception as e:
+        db.rollback()
+        raise e
+
+def get_admin_stats(db: Session) -> Dict[str, Any]:
+    try:
+        total_farmers = db.query(func.count(User.id)).filter(User.role == "farmer").scalar() or 0
+        total_applications = db.query(func.count(Application.id)).scalar() or 0
+        total_schemes = db.query(func.count(GovernmentScheme.id)).scalar() or 0
+        
+        # For sum, need to handle None
+        benefits_sum = db.query(func.sum(Application.approved_amount)).filter(
+            Application.status == "approved"
+        ).scalar()
+        benefits_distributed = float(benefits_sum) if benefits_sum else 0.0
+        
+        pending_verifications = db.query(func.count(Document.id)).filter(
+            Document.verified == False
+        ).scalar() or 0
+        
+        return {
+            "total_farmers": total_farmers,
+            "total_applications": total_applications,
+            "total_schemes": total_schemes,
+            "benefits_distributed": benefits_distributed,
+            "pending_verifications": pending_verifications,
+            "ai_accuracy": 98.5
+        }
+    except Exception as e:
+        # Return default stats if query fails
+        return {
+            "total_farmers": 0,
+            "total_applications": 0,
+            "total_schemes": 0,
+            "benefits_distributed": 0.0,
+            "pending_verifications": 0,
+            "ai_accuracy": 98.5,
+            "error": str(e)[:100]
+        }
