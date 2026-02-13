@@ -300,42 +300,45 @@ async def create_application(
             detail=f"Failed to submit application: {str(e)}"
         )
 
-@router.get("/applications")  # ✅ NO trailing slash
+@router.get("/applications")
 async def get_all_applications_admin(
+    request: Request,  # ✅ ADD THIS for CORS
     skip: int = 0,
     limit: int = 100,
-    status: Optional[str] = Query(None, description="Filter by status"),
+    status_filter: Optional[str] = Query(None, description="Filter by status"),  # ✅ Renamed to avoid conflict
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """Get all applications with filters - ENHANCED VERSION"""
+    """Get all applications with filters"""
     try:
         print("="*50)
         print(f"📋 GET /admin/applications called")
-        print(f"   Params: skip={skip}, limit={limit}, status={status}, search={search}")
+        print(f"   Params: skip={skip}, limit={limit}, status={status_filter}, search={search}")
         
-        # Build query with eager loading
-        query = db.query(Application).options(
-            db.joinedload(Application.user),
-            db.joinedload(Application.scheme)
-        )
+        # ✅ FIXED: Don't use db.joinedload - it's wrong!
+        query = db.query(Application)
         
         # Apply status filter
-        if status:
+        if status_filter:
             valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed", "completed"]
-            if status not in valid_statuses:
-                return JSONResponse({
-                    "success": False,
-                    "error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}",
-                    "applications": []
-                })
-            query = query.filter(Application.status == status)
+            if status_filter not in valid_statuses:
+                response = JSONResponse(
+                    status_code=400,
+                    content={"success": False, "error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}", "applications": []}
+                )
+                # Add CORS headers
+                origin = request.headers.get("origin")
+                if origin and "vercel.app" in origin:
+                    response.headers["Access-Control-Allow-Origin"] = origin
+                    response.headers["Access-Control-Allow-Credentials"] = "true"
+                return response
+            query = query.filter(Application.status == status_filter)
         
-        # Get total count first
+        # Get total count
         total_count = query.count()
         print(f"📊 Total applications in DB (with filters): {total_count}")
         
-        # Get applications with order
+        # Get applications with pagination
         applications = query.order_by(Application.applied_at.desc()).offset(skip).limit(limit).all()
         
         print(f"✅ Found {len(applications)} applications in this batch")
@@ -343,60 +346,19 @@ async def get_all_applications_admin(
         result = []
         for app in applications:
             try:
+                # ✅ FIXED: Manually load user and scheme
+                user = None
+                if app.user_id:
+                    user = db.query(User).filter(User.id == app.user_id).first()
+                
+                scheme = None
+                if app.scheme_id:
+                    scheme = db.query(GovernmentScheme).filter(GovernmentScheme.id == app.scheme_id).first()
+                
                 # Safely get status string
                 status_value = app.status
                 if hasattr(status_value, 'value'):
                     status_value = status_value.value
-                
-                # Safely get user data
-                user_data = None
-                if app.user:
-                    user_data = {
-                        "id": app.user.id,
-                        "farmer_id": app.user.farmer_id,
-                        "full_name": app.user.full_name or "Unknown",
-                        "mobile_number": app.user.mobile_number,
-                        "email": app.user.email,
-                        "state": app.user.state,
-                        "district": app.user.district
-                    }
-                else:
-                    # Try to get user from database if not loaded
-                    if app.user_id:
-                        user = db.query(User).filter(User.id == app.user_id).first()
-                        if user:
-                            user_data = {
-                                "id": user.id,
-                                "farmer_id": user.farmer_id,
-                                "full_name": user.full_name or "Unknown",
-                                "mobile_number": user.mobile_number,
-                                "email": user.email,
-                                "state": user.state,
-                                "district": user.district
-                            }
-                
-                # Safely get scheme data
-                scheme_data = None
-                if app.scheme:
-                    scheme_data = {
-                        "id": app.scheme.id,
-                        "scheme_name": app.scheme.scheme_name or "Unknown",
-                        "scheme_code": app.scheme.scheme_code,
-                        "benefit_amount": float(app.scheme.benefit_amount) if app.scheme.benefit_amount else 0,
-                        "scheme_type": app.scheme.scheme_type.value if hasattr(app.scheme.scheme_type, 'value') else app.scheme.scheme_type
-                    }
-                else:
-                    # Try to get scheme from database if not loaded
-                    if app.scheme_id:
-                        scheme = db.query(GovernmentScheme).filter(GovernmentScheme.id == app.scheme_id).first()
-                        if scheme:
-                            scheme_data = {
-                                "id": scheme.id,
-                                "scheme_name": scheme.scheme_name or "Unknown",
-                                "scheme_code": scheme.scheme_code,
-                                "benefit_amount": float(scheme.benefit_amount) if scheme.benefit_amount else 0,
-                                "scheme_type": scheme.scheme_type.value if hasattr(scheme.scheme_type, 'value') else scheme.scheme_type
-                            }
                 
                 app_data = {
                     "id": app.id,
@@ -406,14 +368,22 @@ async def get_all_applications_admin(
                     "approved_amount": float(app.approved_amount) if app.approved_amount else 0,
                     "applied_at": app.applied_at.isoformat() if app.applied_at else None,
                     "updated_at": app.updated_at.isoformat() if app.updated_at else None,
-                    "user_id": app.user_id,
-                    "scheme_id": app.scheme_id,
-                    "user": user_data,
-                    "scheme": scheme_data,
+                    "user": {
+                        "id": user.id if user else None,
+                        "farmer_id": user.farmer_id if user else None,
+                        "full_name": user.full_name if user else "Unknown",
+                        "mobile_number": user.mobile_number if user else None
+                    } if user else None,
+                    "scheme": {
+                        "id": scheme.id if scheme else None,
+                        "scheme_name": scheme.scheme_name if scheme else "Unknown",
+                        "scheme_code": scheme.scheme_code if scheme else None,
+                        "benefit_amount": float(scheme.benefit_amount) if scheme and scheme.benefit_amount else 0
+                    } if scheme else None,
                     "application_data": app.application_data or {}
                 }
                 
-                # Apply search filter if needed
+                # Apply search filter
                 if search and search.strip():
                     search_lower = search.lower().strip()
                     matches = False
@@ -432,37 +402,42 @@ async def get_all_applications_admin(
                 
             except Exception as e:
                 print(f"⚠️ Error processing application {app.id}: {e}")
-                import traceback
-                traceback.print_exc()
                 continue
         
-        print(f"✅ Returning {len(result)} applications after processing")
+        print(f"✅ Returning {len(result)} applications")
         
-        # ENSURE THE RESPONSE FORMAT MATCHES WHAT FRONTEND EXPECTS
-        response_data = {
+        response = JSONResponse({
             "success": True,
             "count": len(result),
-            "applications": result,  # This is what frontend looks for
+            "applications": result,
             "total": total_count
-        }
+        })
         
-        # Log the first application for debugging
-        if result and len(result) > 0:
-            print(f"📋 Sample application: ID={result[0]['id']}, Status={result[0]['status']}, Farmer={result[0]['user']['full_name'] if result[0]['user'] else 'None'}")
+        # ✅ ADD CORS HEADERS
+        origin = request.headers.get("origin")
+        if origin and "vercel.app" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
         
-        return JSONResponse(response_data)
+        return response
         
     except Exception as e:
-        print(f"❌ CRITICAL ERROR in get_all_applications_admin: {str(e)}")
+        print(f"❌ CRITICAL ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
-        # Return empty array with error info - but maintain the format frontend expects
-        return JSONResponse({
-            "success": False,
-            "error": str(e),
-            "applications": [],  # Empty array, not null
-            "count": 0
-        })
+        
+        response = JSONResponse(
+            status_code=500,
+            content={"success": False, "error": str(e), "applications": [], "count": 0}
+        )
+        
+        # ✅ ADD CORS HEADERS EVEN FOR ERRORS
+        origin = request.headers.get("origin")
+        if origin and "vercel.app" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        
+        return response
 
 @router.get("/applications/{application_id}")
 async def get_application_details(
