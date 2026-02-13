@@ -62,7 +62,7 @@ async def login(request: Request, form_data: UserLogin, db: Session = Depends(ge
             "full_name": user.full_name,
             "mobile_number": user.mobile_number,
             "email": user.email,
-            "aadhaar_number": user.aadhaar_number,  # ✅ NEW
+            "aadhaar_number": user.aadhaar_number,
             "role": user.role.value if hasattr(user.role, 'value') else user.role,
             "state": getattr(user, 'state', None),
             "district": getattr(user, 'district', None),
@@ -120,7 +120,7 @@ async def login(request: Request, form_data: UserLogin, db: Session = Depends(ge
 @router.post("/register")
 async def register(
     request: Request,
-    user: UserCreate,  # Now includes all fields!
+    user: UserCreate,
     db: Session = Depends(get_db)
 ):
     """
