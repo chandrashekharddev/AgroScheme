@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, field_validator, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -62,18 +62,48 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str
+    # Personal details
+    aadhaar_number: Optional[str] = Field(None, alias="aadhaar")
+    
+    # Farm details
+    total_land_acres: Optional[float] = Field(None, alias="landSize")
+    land_type: Optional[str] = Field(None, alias="landType")
+    main_crops: Optional[str] = Field(None, alias="crops")
+    annual_income: Optional[float] = Field(None, alias="annualIncome")
+    
+    # Bank details
+    bank_account_number: Optional[str] = Field(None, alias="bankAccount")
+    bank_name: Optional[str] = Field(None, alias="bankName")
+    ifsc_code: Optional[str] = Field(None, alias="ifsc")
     
     @field_validator('password')
     def validate_password(cls, v):
         if len(v) < 6:
             raise ValueError('Password must be at least 6 characters')
         return v
+    
+    @field_validator('aadhaar_number')
+    def validate_aadhaar(cls, v):
+        if v and (not v.isdigit() or len(v) != 12):
+            raise ValueError('Aadhaar number must be 12 digits')
+        return v
+    
+    @field_validator('total_land_acres')
+    def validate_land_acres(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('Land acres cannot be negative')
+        return v
+    
+    @field_validator('annual_income')
+    def validate_income(cls, v):
+        if v is not None and v < 0:
+            raise ValueError('Annual income cannot be negative')
+        return v
 
 class UserLogin(BaseModel):
     mobile_number: str
     password: str
 
-# app/schemas.py - UserUpdate schema
 class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     email: Optional[EmailStr] = None
@@ -81,6 +111,7 @@ class UserUpdate(BaseModel):
     district: Optional[str] = None
     village: Optional[str] = None
     language: Optional[str] = None
+    aadhaar_number: Optional[str] = None
     total_land_acres: Optional[float] = None
     land_type: Optional[str] = None
     main_crops: Optional[str] = None
@@ -94,10 +125,12 @@ class UserUpdate(BaseModel):
     
     class Config:
         from_attributes = True
+
 class UserResponse(UserBase):
     id: int
     farmer_id: str
     role: UserRole
+    aadhaar_number: Optional[str] = None
     total_land_acres: Optional[float] = None
     land_type: Optional[str] = None
     main_crops: Optional[str] = None
@@ -129,7 +162,7 @@ class DocumentResponse(DocumentBase):
     file_name: str
     file_size: int
     file_path: Optional[str] = None
-    file_url: Optional[str] = None  # Add this
+    file_url: Optional[str] = None
     extracted_data: Optional[Dict[str, Any]] = None
     verified: bool
     uploaded_at: datetime
@@ -137,12 +170,11 @@ class DocumentResponse(DocumentBase):
     class Config:
         from_attributes = True
 
-# app/schemas.py
 class SchemeBase(BaseModel):
     scheme_name: str
     scheme_code: str
     description: str
-    scheme_type: str  # ✅ Simple string, not enum
+    scheme_type: str
     department: str = "Agriculture"
     benefit_amount: Optional[str] = None
     last_date: Optional[datetime] = None
