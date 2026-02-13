@@ -237,7 +237,7 @@ async def create_application(
             user_id=user.id,
             scheme_id=scheme.id,
             applied_amount=application.applied_amount,
-            status="pending",
+            status="PENDING",
             applied_at=datetime.utcnow(),
             application_data={
                 "farmer_id": user.farmer_id,
