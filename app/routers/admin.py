@@ -302,10 +302,10 @@ async def create_application(
 
 @router.get("/applications")
 async def get_all_applications_admin(
-    request: Request,  # ✅ ADD THIS for CORS
+    request: Request,
     skip: int = 0,
     limit: int = 100,
-    status_filter: Optional[str] = Query(None, description="Filter by status"),  # ✅ Renamed to avoid conflict
+    status_filter: Optional[str] = Query(None, description="Filter by status"),
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
@@ -315,24 +315,38 @@ async def get_all_applications_admin(
         print(f"📋 GET /admin/applications called")
         print(f"   Params: skip={skip}, limit={limit}, status={status_filter}, search={search}")
         
-        # ✅ FIXED: Don't use db.joinedload - it's wrong!
+        # Build query
         query = db.query(Application)
         
-        # Apply status filter
+        # Apply status filter - handle both uppercase and lowercase
         if status_filter:
-            valid_statuses = ["pending", "under_review", "approved", "rejected", "docs_needed", "completed"]
-            if status_filter not in valid_statuses:
+            # Convert to uppercase to match enum
+            status_upper = status_filter.upper()
+            valid_statuses = ["PENDING", "UNDER_REVIEW", "APPROVED", "REJECTED", "DOCS_NEEDED", "COMPLETED"]
+            
+            if status_upper not in valid_statuses:
                 response = JSONResponse(
                     status_code=400,
-                    content={"success": False, "error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}", "applications": []}
+                    content={
+                        "success": False, 
+                        "error": f"Invalid status. Must be one of: {', '.join(valid_statuses)}",
+                        "applications": []
+                    }
                 )
-                # Add CORS headers
                 origin = request.headers.get("origin")
                 if origin and "vercel.app" in origin:
                     response.headers["Access-Control-Allow-Origin"] = origin
                     response.headers["Access-Control-Allow-Credentials"] = "true"
                 return response
-            query = query.filter(Application.status == status_filter)
+            
+            # Handle enum comparison properly
+            from app.models import ApplicationStatus
+            status_enum = getattr(ApplicationStatus, status_upper, None)
+            if status_enum:
+                query = query.filter(Application.status == status_enum)
+            else:
+                # Fallback to string comparison
+                query = query.filter(Application.status == status_upper)
         
         # Get total count
         total_count = query.count()
@@ -346,7 +360,7 @@ async def get_all_applications_admin(
         result = []
         for app in applications:
             try:
-                # ✅ FIXED: Manually load user and scheme
+                # Manually load user and scheme
                 user = None
                 if app.user_id:
                     user = db.query(User).filter(User.id == app.user_id).first()
@@ -355,15 +369,17 @@ async def get_all_applications_admin(
                 if app.scheme_id:
                     scheme = db.query(GovernmentScheme).filter(GovernmentScheme.id == app.scheme_id).first()
                 
-                # Safely get status string
+                # Get status as string (handle enum)
                 status_value = app.status
                 if hasattr(status_value, 'value'):
                     status_value = status_value.value
+                elif hasattr(status_value, '__str__'):
+                    status_value = str(status_value)
                 
                 app_data = {
                     "id": app.id,
                     "application_id": app.application_id or f"APP{app.id}",
-                    "status": status_value,
+                    "status": status_value,  # This will be UPPERCASE from enum
                     "applied_amount": float(app.applied_amount) if app.applied_amount else 0,
                     "approved_amount": float(app.approved_amount) if app.approved_amount else 0,
                     "applied_at": app.applied_at.isoformat() if app.applied_at else None,
@@ -383,7 +399,7 @@ async def get_all_applications_admin(
                     "application_data": app.application_data or {}
                 }
                 
-                # Apply search filter
+                # Apply search filter if needed
                 if search and search.strip():
                     search_lower = search.lower().strip()
                     matches = False
@@ -413,7 +429,7 @@ async def get_all_applications_admin(
             "total": total_count
         })
         
-        # ✅ ADD CORS HEADERS
+        # Add CORS headers
         origin = request.headers.get("origin")
         if origin and "vercel.app" in origin:
             response.headers["Access-Control-Allow-Origin"] = origin
@@ -428,10 +444,15 @@ async def get_all_applications_admin(
         
         response = JSONResponse(
             status_code=500,
-            content={"success": False, "error": str(e), "applications": [], "count": 0}
+            content={
+                "success": False, 
+                "error": str(e), 
+                "applications": [], 
+                "count": 0
+            }
         )
         
-        # ✅ ADD CORS HEADERS EVEN FOR ERRORS
+        # Add CORS headers even for errors
         origin = request.headers.get("origin")
         if origin and "vercel.app" in origin:
             response.headers["Access-Control-Allow-Origin"] = origin
