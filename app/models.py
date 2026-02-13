@@ -19,12 +19,12 @@ class DocumentType(str, enum.Enum):
     OTHER = "other"
 
 class ApplicationStatus(str, enum.Enum):
-    PENDING = "pending"
-    UNDER_REVIEW = "under_review"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    DOCS_NEEDED = "docs_needed"
-    COMPLETED = "completed"
+    PENDING = "PENDING"              
+    UNDER_REVIEW = "UNDER_REVIEW"  
+    APPROVED = "APPROVED"           
+    REJECTED = "REJECTED"          
+    DOCS_NEEDED = "DOCS_NEEDED"     
+    COMPLETED = "COMPLETED"       
 
 class User(Base):
     __tablename__ = "users"
