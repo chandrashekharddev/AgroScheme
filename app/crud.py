@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, text  # ← ADDED 'text' import for any future raw SQL
+from sqlalchemy import func, text
 from typing import List, Optional, Dict, Any
 import random
 import string
@@ -20,7 +20,7 @@ def get_user_by_id(db: Session, user_id: int):
         return user
     except Exception as e:
         print(f"❌ Error in get_user_by_id: {str(e)}")
-        return None()
+        return None
 
 def get_user_by_mobile(db: Session, mobile_number: str) -> Optional[User]:
     return db.query(User).filter(User.mobile_number == mobile_number).first()
@@ -32,6 +32,7 @@ def get_user_by_farmer_id(db: Session, farmer_id: str) -> Optional[User]:
     return db.query(User).filter(User.farmer_id == farmer_id).first()
 
 def create_user(db: Session, user: UserCreate) -> User:
+    """Create a new user with ALL fields from registration form"""
     state_code = user.state[:2].upper()
     district_code = user.district[:2].upper()
     farmer_id = generate_farmer_id(state_code, district_code)
@@ -39,7 +40,7 @@ def create_user(db: Session, user: UserCreate) -> User:
     # Check if farmer_id already exists
     existing_user = get_user_by_farmer_id(db, farmer_id)
     attempts = 0
-    while existing_user and attempts < 10:  # Limit attempts to prevent infinite loop
+    while existing_user and attempts < 10:
         farmer_id = generate_farmer_id(state_code, district_code)
         existing_user = get_user_by_farmer_id(db, farmer_id)
         attempts += 1
@@ -48,17 +49,39 @@ def create_user(db: Session, user: UserCreate) -> User:
         # Fallback: append random string
         farmer_id = f"{farmer_id}{random.randint(100, 999)}"
     
+    print(f"📝 Creating user with data: {user.dict()}")
+    
+    # Create user with ALL fields from registration form
     db_user = User(
+        # Personal info
         full_name=user.full_name,
         mobile_number=user.mobile_number,
         email=user.email,
+        aadhaar_number=user.aadhaar_number,  # ✅ From form
         password_hash=get_password_hash(user.password),
         state=user.state,
         district=user.district,
         village=user.village,
         language=user.language,
         farmer_id=farmer_id,
-        role="farmer"
+        role="farmer",
+        
+        # Farm details
+        total_land_acres=user.total_land_acres,  # ✅ From form (landSize)
+        land_type=user.land_type,  # ✅ From form (landType)
+        main_crops=user.main_crops,  # ✅ From form (crops)
+        annual_income=user.annual_income,  # ✅ From form (annualIncome)
+        
+        # Bank details
+        bank_account_number=user.bank_account_number,  # ✅ From form (bankAccount)
+        bank_name=user.bank_name,  # ✅ From form (bankName)
+        ifsc_code=user.ifsc_code,  # ✅ From form (ifsc)
+        
+        # Default settings
+        bank_verified=False,
+        auto_apply_enabled=True,
+        email_notifications=True,
+        sms_notifications=True
     )
     
     try:
@@ -66,11 +89,14 @@ def create_user(db: Session, user: UserCreate) -> User:
         db.commit()
         db.refresh(db_user)
         
+        print(f"✅ User created successfully: ID={db_user.id}, Farmer ID={db_user.farmer_id}")
+        print(f"   Saved fields: Aadhaar={db_user.aadhaar_number}, Land={db_user.total_land_acres} acres, Bank={db_user.bank_account_number}")
+        
         # Create welcome notification
         notification = Notification(
             user_id=db_user.id,
             title="Welcome to AgroScheme AI!",
-            message=f"Hello {db_user.full_name}, welcome to AgroScheme AI.",
+            message=f"Hello {db_user.full_name}, welcome to AgroScheme AI. Complete your profile to get started!",
             notification_type="system"
         )
         db.add(notification)
@@ -79,9 +105,11 @@ def create_user(db: Session, user: UserCreate) -> User:
         return db_user
     except Exception as e:
         db.rollback()
+        print(f"❌ Error creating user: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise e
 
-# app/crud.py - FIXED update_user function
 def update_user(db: Session, user_id: int, user_update: UserUpdate) -> Optional[User]:
     """Update user profile with error handling"""
     db_user = get_user_by_id(db, user_id)
@@ -101,7 +129,7 @@ def update_user(db: Session, user_id: int, user_update: UserUpdate) -> Optional[
         db.commit()
         db.refresh(db_user)
         print(f"✅ User {user_id} updated successfully")
-        return db_user  # Return the SQLAlchemy object - the endpoint will convert to dict
+        return db_user
         
     except Exception as e:
         db.rollback()
@@ -194,7 +222,7 @@ def get_scheme_by_code(db: Session, scheme_code: str) -> Optional[GovernmentSche
     return db.query(GovernmentScheme).filter(GovernmentScheme.scheme_code == scheme_code).first()
 
 def get_all_schemes(db: Session, skip: int = 0, limit: int = 100, active_only: bool = False):
-    """Get all government schemes from database - ULTIMATE FIXED VERSION"""
+    """Get all government schemes from database"""
     try:
         print("=" * 60)
         print("🔍 get_all_schemes: STARTING")
@@ -474,5 +502,5 @@ def get_admin_stats(db: Session) -> Dict[str, Any]:
             "benefits_distributed": 0.0,
             "pending_verifications": 0,
             "ai_accuracy": 98.5,
-            "error": str(e)[:100]  # Include error for debugging
+            "error": str(e)[:100]
         }
