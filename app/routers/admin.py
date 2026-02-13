@@ -250,7 +250,7 @@ async def create_application(
             },
             submitted_documents=[],
             status_history=[{
-                "status": "pending",
+                "status": "PENDING",
                 "timestamp": datetime.utcnow().isoformat(),
                 "note": "Application submitted by farmer"
             }]
@@ -280,7 +280,7 @@ async def create_application(
             "message": "Application submitted successfully",
             "application_id": application_id,
             "application_db_id": new_application.id,
-            "status": "pending"
+            "status": "PENDING"
         })
         
         if origin and "vercel.app" in origin:
