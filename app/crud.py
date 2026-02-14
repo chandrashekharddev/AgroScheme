@@ -32,7 +32,17 @@ def get_user_by_farmer_id(db: Session, farmer_id: str) -> Optional[User]:
     return db.query(User).filter(User.farmer_id == farmer_id).first()
 
 def create_user(db: Session, user: UserCreate) -> User:
-    """Create a new user with ALL fields from registration form"""
+    """Create a new user with ALL fields from registration form - ULTIMATE DEBUG VERSION"""
+    print("\n" + "="*80)
+    print("🏭 CREATE_USER FUNCTION CALLED")
+    print("="*80)
+    
+    # Log incoming user object
+    print("\n📦 DATA RECEIVED IN CREATE_USER:")
+    user_dict = user.dict()
+    for key, value in user_dict.items():
+        print(f"   {key:25}: {repr(value)}")
+    
     state_code = user.state[:2].upper()
     district_code = user.district[:2].upper()
     farmer_id = generate_farmer_id(state_code, district_code)
@@ -46,18 +56,17 @@ def create_user(db: Session, user: UserCreate) -> User:
         attempts += 1
     
     if attempts >= 10:
-        # Fallback: append random string
         farmer_id = f"{farmer_id}{random.randint(100, 999)}"
     
-    print(f"📝 Creating user with data: {user.dict()}")
+    # Create user with ALL fields
+    print("\n🔧 CREATING DATABASE USER OBJECT:")
     
-    # Create user with ALL fields from registration form
     db_user = User(
         # Personal info
         full_name=user.full_name,
         mobile_number=user.mobile_number,
         email=user.email,
-        aadhaar_number=user.aadhaar_number,  # ✅ From form
+        aadhaar_number=user.aadhaar_number,
         password_hash=get_password_hash(user.password),
         state=user.state,
         district=user.district,
@@ -67,15 +76,15 @@ def create_user(db: Session, user: UserCreate) -> User:
         role="farmer",
         
         # Farm details
-        total_land_acres=user.total_land_acres,  # ✅ From form (landSize)
-        land_type=user.land_type,  # ✅ From form (landType)
-        main_crops=user.main_crops,  # ✅ From form (crops)
-        annual_income=user.annual_income,  # ✅ From form (annualIncome)
+        total_land_acres=user.total_land_acres,
+        land_type=user.land_type,
+        main_crops=user.main_crops,
+        annual_income=user.annual_income,
         
         # Bank details
-        bank_account_number=user.bank_account_number,  # ✅ From form (bankAccount)
-        bank_name=user.bank_name,  # ✅ From form (bankName)
-        ifsc_code=user.ifsc_code,  # ✅ From form (ifsc)
+        bank_account_number=user.bank_account_number,
+        bank_name=user.bank_name,
+        ifsc_code=user.ifsc_code,
         
         # Default settings
         bank_verified=False,
@@ -84,56 +93,51 @@ def create_user(db: Session, user: UserCreate) -> User:
         sms_notifications=True
     )
     
+    print("\n📝 VALUES BEING SET IN DATABASE OBJECT:")
+    print(f"   full_name: {db_user.full_name}")
+    print(f"   mobile_number: {db_user.mobile_number}")
+    print(f"   aadhaar_number: {db_user.aadhaar_number}")
+    print(f"   total_land_acres: {db_user.total_land_acres}")
+    print(f"   land_type: {db_user.land_type}")
+    print(f"   main_crops: {db_user.main_crops}")
+    print(f"   annual_income: {db_user.annual_income}")
+    print(f"   bank_account_number: {db_user.bank_account_number}")
+    print(f"   bank_name: {db_user.bank_name}")
+    print(f"   ifsc_code: {db_user.ifsc_code}")
+    
     try:
+        print("\n💾 SAVING TO DATABASE...")
         db.add(db_user)
         db.commit()
         db.refresh(db_user)
         
-        print(f"✅ User created successfully: ID={db_user.id}, Farmer ID={db_user.farmer_id}")
-        print(f"   Saved fields: Aadhaar={db_user.aadhaar_number}, Land={db_user.total_land_acres} acres, Bank={db_user.bank_account_number}")
+        print("\n✅ DATABASE SAVE SUCCESSFUL!")
+        print("   VERIFYING SAVED VALUES:")
+        print(f"   aadhaar_number: {db_user.aadhaar_number}")
+        print(f"   total_land_acres: {db_user.total_land_acres}")
+        print(f"   land_type: {db_user.land_type}")
+        print(f"   main_crops: {db_user.main_crops}")
+        print(f"   annual_income: {db_user.annual_income}")
+        print(f"   bank_account_number: {db_user.bank_account_number}")
+        print(f"   bank_name: {db_user.bank_name}")
+        print(f"   ifsc_code: {db_user.ifsc_code}")
         
         # Create welcome notification
         notification = Notification(
             user_id=db_user.id,
             title="Welcome to AgroScheme AI!",
-            message=f"Hello {db_user.full_name}, welcome to AgroScheme AI. Complete your profile to get started!",
+            message=f"Hello {db_user.full_name}, welcome to AgroScheme AI!",
             notification_type="system"
         )
         db.add(notification)
         db.commit()
         
-        return db_user
-    except Exception as e:
-        db.rollback()
-        print(f"❌ Error creating user: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        raise e
-
-def update_user(db: Session, user_id: int, user_update: UserUpdate) -> Optional[User]:
-    """Update user profile with error handling"""
-    db_user = get_user_by_id(db, user_id)
-    if not db_user:
-        print(f"❌ User not found with ID: {user_id}")
-        return None
-    
-    try:
-        update_data = user_update.dict(exclude_unset=True)
-        print(f"📝 Updating user {user_id} with: {update_data}")
-        
-        for field, value in update_data.items():
-            if hasattr(db_user, field):
-                setattr(db_user, field, value)
-                print(f"  ✅ Set {field} = {value}")
-        
-        db.commit()
-        db.refresh(db_user)
-        print(f"✅ User {user_id} updated successfully")
+        print("="*80 + "\n")
         return db_user
         
     except Exception as e:
         db.rollback()
-        print(f"❌ Error updating user {user_id}: {str(e)}")
+        print(f"\n❌ DATABASE ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
         raise e
