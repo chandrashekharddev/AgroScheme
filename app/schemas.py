@@ -35,11 +35,11 @@ class DocumentType(str, Enum):
     OTHER = "other"
 
 class ApplicationStatus(str, Enum):
-    PENDING = "pending"
-    UNDER_REVIEW = "under_review"
-    APPROVED = "approved"
-    REJECTED = "rejected"
-    DOCS_NEEDED = "docs_needed"
+    PENDING = "PENDING"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    DOCS_NEEDED = "DOCS_NEEDED"
 
 class SchemeType(str, Enum):
     CENTRAL = "central"
@@ -63,18 +63,18 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     # Personal details
-    aadhaar_number: Optional[str] = Field(None, alias="aadhaar")
+    aadhaar_number: Optional[str] = None
     
     # Farm details
-    total_land_acres: Optional[float] = Field(None, alias="landSize")
-    land_type: Optional[str] = Field(None, alias="landType")
-    main_crops: Optional[str] = Field(None, alias="crops")
-    annual_income: Optional[float] = Field(None, alias="annualIncome")
+    total_land_acres: Optional[float] = None
+    land_type: Optional[str] = None
+    main_crops: Optional[str] = None
+    annual_income: Optional[float] = None
     
     # Bank details
-    bank_account_number: Optional[str] = Field(None, alias="bankAccount")
-    bank_name: Optional[str] = Field(None, alias="bankName")
-    ifsc_code: Optional[str] = Field(None, alias="ifsc")
+    bank_account_number: Optional[str] = None
+    bank_name: Optional[str] = None
+    ifsc_code: Optional[str] = None
     
     @field_validator('password')
     def validate_password(cls, v):
@@ -86,18 +86,6 @@ class UserCreate(UserBase):
     def validate_aadhaar(cls, v):
         if v and (not v.isdigit() or len(v) != 12):
             raise ValueError('Aadhaar number must be 12 digits')
-        return v
-    
-    @field_validator('total_land_acres')
-    def validate_land_acres(cls, v):
-        if v is not None and v < 0:
-            raise ValueError('Land acres cannot be negative')
-        return v
-    
-    @field_validator('annual_income')
-    def validate_income(cls, v):
-        if v is not None and v < 0:
-            raise ValueError('Annual income cannot be negative')
         return v
 
 class UserLogin(BaseModel):
