@@ -124,33 +124,44 @@ async def register(
     db: Session = Depends(get_db)
 ):
     """
-    Register a new farmer with complete profile
+    Register a new farmer with complete profile - ULTIMATE DEBUG VERSION
     """
     try:
         origin = request.headers.get("origin", "")
-        print("="*50)
-        print(f"📝 REGISTRATION ATTEMPT")
-        print(f"   Origin: {origin}")
-        print(f"   Mobile: {user.mobile_number}")
-        print(f"   Name: {user.full_name}")
-        print(f"   Aadhaar: {user.aadhaar_number}")
-        print(f"   State: {user.state}")
-        print(f"   District: {user.district}")
-        print(f"   Village: {user.village}")
-        print(f"   Language: {user.language}")
-        print(f"   Land Size: {user.total_land_acres} acres")
-        print(f"   Land Type: {user.land_type}")
-        print(f"   Crops: {user.main_crops}")
-        print(f"   Annual Income: {user.annual_income}")
-        print(f"   Bank Account: {user.bank_account_number}")
-        print(f"   Bank Name: {user.bank_name}")
-        print(f"   IFSC: {user.ifsc_code}")
-        print("="*50)
+        print("\n" + "="*80)
+        print("🚨 ULTIMATE DEBUG - REGISTRATION ENDPOINT HIT")
+        print("="*80)
+        print(f"🌐 Origin: {origin}")
+        
+        # Log raw request body
+        body = await request.body()
+        print(f"\n📦 RAW REQUEST BODY: {body.decode('utf-8')}")
+        
+        # Log the parsed user object
+        print("\n🔍 PARSED UserCreate OBJECT:")
+        user_dict = user.dict()
+        for key, value in user_dict.items():
+            print(f"   {key:25}: {repr(value)} (type: {type(value).__name__})")
+        
+        # Check specifically for aadhaar_number
+        print("\n🔍 FIELD VALIDATION CHECK:")
+        critical_fields = [
+            'aadhaar_number', 'total_land_acres', 'land_type', 
+            'main_crops', 'annual_income', 'bank_account_number',
+            'bank_name', 'ifsc_code'
+        ]
+        
+        for field in critical_fields:
+            value = user_dict.get(field)
+            if value is None:
+                print(f"   ❌ {field}: MISSING!")
+            else:
+                print(f"   ✅ {field}: {repr(value)}")
         
         # Check if user already exists
         db_user = get_user_by_mobile(db, mobile_number=user.mobile_number)
         if db_user:
-            print(f"❌ Mobile number already registered: {user.mobile_number}")
+            print(f"\n❌ Mobile number already registered: {user.mobile_number}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Mobile number already registered"
@@ -160,18 +171,27 @@ async def register(
         if user.email:
             db_user_email = get_user_by_email(db, email=user.email)
             if db_user_email:
-                print(f"❌ Email already registered: {user.email}")
+                print(f"\n❌ Email already registered: {user.email}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email already registered"
                 )
         
-        # Create user in database with ALL fields
+        print("\n🔧 Calling create_user function...")
         new_user = create_user(db=db, user=user)
-        print(f"✅ User registered successfully!")
+        
+        print("\n✅ DATABASE SAVE COMPLETE - VERIFYING SAVED DATA:")
         print(f"   ID: {new_user.id}")
         print(f"   Farmer ID: {new_user.farmer_id}")
-        print(f"   Saved fields: Aadhaar={new_user.aadhaar_number}, Land={new_user.total_land_acres}, Bank={new_user.bank_account_number}")
+        print(f"   Aadhaar: {new_user.aadhaar_number}")
+        print(f"   Total Land: {new_user.total_land_acres}")
+        print(f"   Land Type: {new_user.land_type}")
+        print(f"   Main Crops: {new_user.main_crops}")
+        print(f"   Annual Income: {new_user.annual_income}")
+        print(f"   Bank Account: {new_user.bank_account_number}")
+        print(f"   Bank Name: {new_user.bank_name}")
+        print(f"   IFSC: {new_user.ifsc_code}")
+        print("="*80 + "\n")
         
         response = JSONResponse({
             "success": True,
@@ -196,7 +216,7 @@ async def register(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"❌ Registration error: {str(e)}")
+        print(f"\n❌ REGISTRATION ERROR: {str(e)}")
         import traceback
         traceback.print_exc()
         raise HTTPException(
