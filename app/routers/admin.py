@@ -527,7 +527,7 @@ async def update_application_status_admin(
 ):
     """Update application status - JSON ONLY"""
     try:
-        valid_statuses = ["pending", "under_review", "approved", "rejected", "completed", "docs_needed"]
+        valid_statuses = ["pending", "under_review", "approved", "rejected", "completed", "docs_needed"]  # ✅ LOWERCASE
         if status_update.status not in valid_statuses:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -537,7 +537,7 @@ async def update_application_status_admin(
         application = update_application_status(
             db, 
             application_id, 
-            status_update.status, 
+            status_update.status,  # ✅ LOWERCASE
             status_update.approved_amount
         )
         
