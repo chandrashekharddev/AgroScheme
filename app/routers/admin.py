@@ -1,4 +1,4 @@
-# app/routers/admin.py - COMPLETE JSON VERSION
+# app/routers/admin.py - COMPLETE FIXED VERSION
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract
@@ -519,6 +519,7 @@ async def get_application_details(
             detail=f"Failed to fetch application details: {str(e)}"
         )
 
+# ==================== ✅ FIXED: Update application status with UPPERCASE ====================
 @router.put("/applications/{application_id}/status")
 async def update_application_status_admin(
     application_id: int,
@@ -527,17 +528,23 @@ async def update_application_status_admin(
 ):
     """Update application status - JSON ONLY"""
     try:
-        valid_statuses = ["pending", "under_review", "approved", "rejected", "completed", "docs_needed"]  # ✅ LOWERCASE
-        if status_update.status not in valid_statuses:
+        # ✅ Use UPPERCASE to match your model enum
+        valid_statuses = ["PENDING", "UNDER_REVIEW", "APPROVED", "REJECTED", "COMPLETED", "DOCS_NEEDED"]
+        
+        # Convert input to uppercase for validation
+        input_status = status_update.status.upper()
+        
+        if input_status not in valid_statuses:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid status. Must be one of: {', '.join(valid_statuses)}"
             )
         
+        # Pass the uppercase value to the crud function
         application = update_application_status(
             db, 
             application_id, 
-            status_update.status,  # ✅ LOWERCASE
+            input_status,  # ✅ Always use uppercase
             status_update.approved_amount
         )
         
@@ -561,9 +568,9 @@ async def update_application_status_admin(
         
         return JSONResponse({
             "success": True,
-            "message": f"Application status updated to {status_update.status}",
+            "message": f"Application status updated to {input_status}",
             "application_id": application_id,
-            "new_status": status_update.status,
+            "new_status": input_status,
             "approved_amount": status_update.approved_amount,
             "updated_at": application.updated_at.isoformat() if application.updated_at else None,
             "admin": "Administrator"
