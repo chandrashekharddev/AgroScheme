@@ -7,6 +7,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 
+from app.eligibility_checker import EligibilityChecker
 from app.database import get_db
 from app.schemas import UserResponse, UserUpdate, DocumentResponse, NotificationResponse, ApplicationResponse, DocumentCreate, SchemeResponse
 from app.crud import (
@@ -526,6 +527,180 @@ async def debug_uploads(
             "error": str(e)
         })
 
+# ==================== ELIGIBILITY CHECKING & AUTO-APPLY ====================
+
+@router.post("/check-eligibility/{scheme_id}")
+async def check_eligibility(
+    request: Request,
+    scheme_id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Check eligibility for a specific scheme using AI"""
+    origin = request.headers.get("origin", "")
+    
+    try:
+        checker = EligibilityChecker(db)
+        result = await checker.check_scheme_for_user(current_user.id, scheme_id)
+        
+        response = JSONResponse({
+            "success": True,
+            "eligible": result.get("eligible", False),
+            "match_percentage": result.get("match_percentage", 0),
+            "reasons": result.get("reasons", []),
+            "matched_criteria": result.get("matched_criteria", []),
+            "missing_criteria": result.get("missing_criteria", []),
+            "has_required_documents": result.get("has_required_documents", False),
+            "document_coverage": result.get("document_coverage", 0),
+            "missing_documents": result.get("missing_documents", []),
+            "present_documents": result.get("present_documents", [])
+        })
+        
+        if origin and "vercel.app" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        
+        return response
+        
+    except Exception as e:
+        print(f"❌ Eligibility check error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to check eligibility: {str(e)}"
+        )
+
+
+@router.post("/apply/{scheme_id}")
+async def apply_for_scheme(
+    request: Request,
+    scheme_id: int,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Manually apply for a scheme after checking eligibility"""
+    origin = request.headers.get("origin", "")
+    
+    try:
+        checker = EligibilityChecker(db)
+        result = await checker.manual_apply_for_user(current_user.id, scheme_id)
+        
+        response = JSONResponse({
+            "success": result.get("success", False),
+            "message": result.get("message", ""),
+            "application_id": result.get("application_id"),
+            "application_number": result.get("application_number"),
+            "eligibility": result.get("eligibility", {})
+        })
+        
+        if origin and "vercel.app" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        
+        return response
+        
+    except Exception as e:
+        print(f"❌ Apply for scheme error: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to apply for scheme: {str(e)}"
+        )
+
+
+@router.get("/my-eligibility-summary")
+async def get_my_eligibility_summary(
+    request: Request,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get eligibility summary for all active schemes"""
+    origin = request.headers.get("origin", "")
+    
+    try:
+        # Get all active schemes
+        schemes = db.query(GovernmentScheme).filter(
+            GovernmentScheme.is_active == True
+        ).limit(10).all()
+        
+        checker = EligibilityChecker(db)
+        results = []
+        
+        for scheme in schemes:
+            result = await checker.check_scheme_for_user(current_user.id, scheme.id)
+            results.append({
+                "scheme_id": scheme.id,
+                "scheme_name": scheme.scheme_name,
+                "scheme_code": scheme.scheme_code,
+                "eligible": result.get("eligible", False),
+                "match_percentage": result.get("match_percentage", 0),
+                "missing_documents": result.get("missing_documents", [])
+            })
+        
+        # Sort by match percentage (highest first)
+        results.sort(key=lambda x: x["match_percentage"], reverse=True)
+        
+        response = JSONResponse({
+            "success": True,
+            "total_checked": len(results),
+            "eligible_count": sum(1 for r in results if r["eligible"]),
+            "results": results
+        })
+        
+        if origin and "vercel.app" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        
+        return response
+        
+    except Exception as e:
+        print(f"❌ Eligibility summary error: {str(e)}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e),
+            "results": []
+        })
+
+
+@router.post("/toggle-auto-apply")
+async def toggle_auto_apply(
+    request: Request,
+    enabled: bool,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Toggle auto-apply setting for user"""
+    origin = request.headers.get("origin", "")
+    
+    try:
+        # Update user's auto_apply_enabled setting
+        from app.crud import update_user
+        from app.schemas import UserUpdate
+        
+        user_update = UserUpdate(auto_apply_enabled=enabled)
+        updated_user = update_user(db, current_user.id, user_update)
+        
+        response = JSONResponse({
+            "success": True,
+            "message": f"Auto-apply {'enabled' if enabled else 'disabled'} successfully",
+            "auto_apply_enabled": enabled
+        })
+        
+        if origin and "vercel.app" in origin:
+            response.headers["Access-Control-Allow-Origin"] = origin
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+        
+        return response
+        
+    except Exception as e:
+        print(f"❌ Toggle auto-apply error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to toggle auto-apply: {str(e)}"
+        )
+        
 # ==================== DELETE DOCUMENT ====================
 @router.delete("/documents/{document_id}")
 async def delete_document(
