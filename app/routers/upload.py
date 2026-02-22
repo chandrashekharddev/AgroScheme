@@ -1,14 +1,21 @@
 # app/routers/upload.py
 
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from app.database import get_db
 from app.models import User, Document
 from app.gemini_processor import GeminiDocumentProcessor
 from app.supabase_storage import supabase_storage
 from app.utils.security import get_current_user
+from app.config import settings
 from datetime import datetime
-import json
+import mimetypes
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/upload", tags=["document-upload"])
 processor = GeminiDocumentProcessor()
@@ -20,97 +27,149 @@ async def upload_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Upload and process any government document"""
+    """Upload and process any government document using Gemini AI"""
     
-    valid_types = [
-        'aadhaar', 'pan', 'land_record', 'bank_passbook', 'income_certificate',
-        'caste_certificate', 'domicile', 'crop_insurance', 'death_certificate'
-    ]
+    logger.info(f"📤 Upload request: user={current_user.farmer_id}, type={document_type}, file={file.filename}")
     
-    if document_type not in valid_types:
+    # Validate document type using settings
+    if document_type not in settings.DOCUMENT_TYPES:
+        logger.error(f"❌ Invalid document type: {document_type}")
         raise HTTPException(status_code=400, 
-            detail=f"Invalid document type. Must be one of: {', '.join(valid_types)}")
+            detail=f"Invalid document type. Must be one of: {', '.join(settings.DOCUMENT_TYPES)}")
     
-    # Check file size (10MB limit)
-    file_size = 0
-    file_bytes = await file.read()
-    file_size = len(file_bytes)
+    # Check file size
+    try:
+        file_bytes = await file.read()
+        file_size = len(file_bytes)
+    except Exception as e:
+        logger.error(f"❌ Failed to read file: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
     
-    if file_size > 10 * 1024 * 1024:  # 10MB
-        raise HTTPException(status_code=400, detail="File too large. Max 10MB allowed.")
+    if file_size > settings.MAX_FILE_SIZE:
+        logger.error(f"❌ File too large: {file_size} bytes")
+        raise HTTPException(status_code=400, 
+            detail=f"File too large. Max {settings.MAX_FILE_SIZE/1024/1024}MB allowed.")
     
-    # Upload to Supabase
-    file_path = await supabase_storage.upload_file(
-        file_bytes=file_bytes,
-        file_name=file.filename,
-        user_id=current_user.farmer_id,
-        document_type=document_type
-    )
+    if file_size == 0:
+        logger.error("❌ Empty file uploaded")
+        raise HTTPException(status_code=400, detail="File is empty")
     
-    # Create document record
-    document = Document(
-        user_id=current_user.id,
-        document_type=document_type,
-        file_path=file_path,
-        file_name=file.filename,
-        file_size=file_size,
-        uploaded_at=datetime.now()
-    )
-    db.add(document)
-    db.flush()  # Get document.id
+    # Check file extension
+    file_ext = '.' + file.filename.split('.')[-1].lower() if '.' in file.filename else ''
+    if file_ext not in settings.ALLOWED_EXTENSIONS:
+        logger.error(f"❌ Invalid file type: {file_ext}")
+        raise HTTPException(status_code=400, 
+            detail=f"Invalid file type. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}")
     
-    # Process with Gemini
-    result = await processor.process_document(
-        file_bytes=file_bytes,
-        file_name=file.filename,
-        document_type=document_type,
-        farmer_id=current_user.farmer_id
-    )
-    
-    if result["success"]:
-        # Insert into specific document table
-        table_name = result["table_name"]
-        extracted_data = result["extracted_data"]
-        extracted_data['document_id'] = document.id
+    try:
+        # Upload to Supabase
+        logger.info(f"📤 Uploading to Supabase: {file.filename}")
+        file_path = await supabase_storage.upload_file(
+            file_bytes=file_bytes,
+            file_name=file.filename,
+            user_id=current_user.farmer_id,
+            document_type=document_type
+        )
+        logger.info(f"✅ Uploaded to Supabase: {file_path}")
         
-        # Build insert query dynamically
-        columns = ', '.join(extracted_data.keys())
-        placeholders = ', '.join([f':{k}' for k in extracted_data.keys()])
+        # Create document record
+        document = Document(
+            user_id=current_user.id,
+            document_type=document_type,
+            file_path=file_path,
+            file_name=file.filename,
+            file_size=file_size,
+            uploaded_at=datetime.now()
+        )
+        db.add(document)
+        db.flush()  # Get document.id
+        logger.info(f"✅ Document record created: ID={document.id}")
         
-        insert_query = f"""
-            INSERT INTO {table_name} ({columns})
-            VALUES ({placeholders})
-            RETURNING id
-        """
+        # Process with Gemini
+        logger.info(f"🤖 Processing with Gemini for {document_type}")
+        result = await processor.process_document(
+            file_bytes=file_bytes,
+            file_name=file.filename,
+            document_type=document_type,
+            farmer_id=current_user.farmer_id
+        )
         
-        record_id = db.execute(insert_query, extracted_data).scalar()
+        if result["success"]:
+            # Insert into specific document table
+            table_name = result["table_name"]
+            extracted_data = result["extracted_data"]
+            extracted_data['document_id'] = document.id
+            
+            # Build insert query dynamically
+            columns = ', '.join(extracted_data.keys())
+            placeholders = ', '.join([f':{k}' for k in extracted_data.keys()])
+            
+            insert_query = f"""
+                INSERT INTO {table_name} ({columns})
+                VALUES ({placeholders})
+                RETURNING id
+            """
+            
+            try:
+                record_id = db.execute(text(insert_query), extracted_data).scalar()
+                logger.info(f"✅ Data inserted into {table_name}: ID={record_id}")
+                
+                # Update document
+                document.extraction_id = record_id
+                document.extraction_table = table_name
+                document.extraction_status = "completed"
+                document.extraction_data = extracted_data
+                
+                db.commit()
+                
+                return {
+                    "success": True,
+                    "message": f"{document_type.replace('_', ' ').title()} uploaded and processed successfully",
+                    "document_id": document.id,
+                    "extraction_id": record_id,
+                    "extracted_data": extracted_data
+                }
+                
+            except Exception as db_error:
+                logger.error(f"❌ Database insert error: {str(db_error)}")
+                document.extraction_status = "failed"
+                document.extraction_error = str(db_error)
+                db.commit()
+                
+                return {
+                    "success": True,
+                    "message": "Document uploaded but database insertion failed",
+                    "document_id": document.id,
+                    "error": str(db_error)
+                }
+        else:
+            logger.error(f"❌ Gemini processing failed: {result.get('error')}")
+            document.extraction_status = "failed"
+            document.extraction_error = result.get("error", "Unknown error")
+            db.commit()
+            
+            return {
+                "success": True,
+                "message": "Document uploaded but AI processing failed",
+                "document_id": document.id,
+                "error": result.get("error")
+            }
+            
+    except Exception as e:
+        logger.error(f"❌ Unexpected error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         
-        # Update document
-        document.extraction_id = record_id
-        document.extraction_table = table_name
-        document.extraction_status = "completed"
-        document.extraction_data = extracted_data
-        
-        db.commit()
-        
-        return {
-            "success": True,
-            "message": f"{document_type.replace('_', ' ').title()} uploaded and processed successfully",
-            "document_id": document.id,
-            "extraction_id": record_id,
-            "extracted_data": extracted_data
-        }
-    else:
-        document.extraction_status = "failed"
-        document.extraction_error = result.get("error", "Unknown error")
-        db.commit()
-        
-        return {
-            "success": True,
-            "message": "Document uploaded but processing failed",
-            "document_id": document.id,
-            "error": result.get("error")
-        }
+        # Try to save document record even if processing fails
+        try:
+            if 'document' in locals():
+                document.extraction_status = "failed"
+                document.extraction_error = str(e)
+                db.commit()
+        except:
+            pass
+            
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 @router.get("/{document_type}/{farmer_id}")
 async def get_farmer_documents(
@@ -121,38 +180,164 @@ async def get_farmer_documents(
 ):
     """Get all documents of a specific type for a farmer"""
     
-    # Security check - only allow farmers to view their own documents
+    logger.info(f"📋 Fetching {document_type} documents for farmer {farmer_id}")
+    
+    # Security check - only allow farmers to view their own documents or admins
     if current_user.farmer_id != farmer_id and current_user.role != "admin":
+        logger.error(f"❌ Unauthorized access: user {current_user.farmer_id} trying to access {farmer_id}")
         raise HTTPException(status_code=403, detail="Not authorized to view these documents")
     
-    table_map = {
-        'aadhaar': 'aadhaar_documents',
-        'pan': 'pan_documents',
-        'land_record': 'land_records',
-        'bank_passbook': 'bank_documents',
-        'income_certificate': 'income_certificates',
-        'caste_certificate': 'caste_certificates',
-        'domicile': 'domicile_certificates',
-        'crop_insurance': 'crop_insurance_docs',
-        'death_certificate': 'death_certificates'
-    }
-    
-    table_name = table_map.get(document_type)
-    if not table_name:
+    if document_type not in settings.DOCUMENT_TABLE_MAP:
+        logger.error(f"❌ Invalid document type: {document_type}")
         raise HTTPException(status_code=400, detail="Invalid document type")
     
-    query = f"SELECT * FROM {table_name} WHERE farmer_id = :farmer_id ORDER BY created_at DESC"
-    result = db.execute(query, {'farmer_id': farmer_id}).fetchall()
+    table_name = settings.DOCUMENT_TABLE_MAP[document_type]
     
-    # Convert to list of dicts
-    documents = []
-    for row in result:
-        doc_dict = dict(row._mapping)
-        documents.append(doc_dict)
+    try:
+        query = f"SELECT * FROM {table_name} WHERE farmer_id = :farmer_id ORDER BY created_at DESC"
+        result = db.execute(text(query), {'farmer_id': farmer_id}).fetchall()
+        
+        # Convert to list of dicts
+        documents = []
+        for row in result:
+            doc_dict = dict(row._mapping)
+            documents.append(doc_dict)
+        
+        logger.info(f"✅ Found {len(documents)} documents")
+        
+        return {
+            "success": True,
+            "document_type": document_type,
+            "count": len(documents),
+            "documents": documents
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch documents: {str(e)}")
+
+@router.get("/status/{document_id}")
+async def get_document_status(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get the processing status of a specific document"""
+    
+    logger.info(f"📋 Checking status for document {document_id}")
+    
+    document = db.query(Document).filter(Document.id == document_id).first()
+    
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # Security check
+    if document.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Not authorized to view this document")
+    
+    status_info = {
+        "document_id": document.id,
+        "file_name": document.file_name,
+        "document_type": document.document_type,
+        "uploaded_at": document.uploaded_at,
+        "extraction_status": document.extraction_status,
+        "extraction_table": document.extraction_table,
+        "extraction_id": document.extraction_id
+    }
+    
+    # If extraction was successful, fetch the extracted data
+    if document.extraction_status == "completed" and document.extraction_table and document.extraction_id:
+        try:
+            query = f"SELECT * FROM {document.extraction_table} WHERE id = :extraction_id"
+            result = db.execute(text(query), {'extraction_id': document.extraction_id}).first()
+            if result:
+                status_info["extracted_data"] = dict(result._mapping)
+        except Exception as e:
+            logger.error(f"❌ Failed to fetch extracted data: {str(e)}")
+            status_info["extracted_data_error"] = str(e)
+    
+    if document.extraction_error:
+        status_info["error"] = document.extraction_error
     
     return {
         "success": True,
-        "document_type": document_type,
-        "count": len(documents),
-        "documents": documents
+        "status": status_info
+    }
+
+# Test endpoint to verify Gemini is working
+@router.get("/test")
+async def test_gemini(current_user: User = Depends(get_current_user)):
+    """Test if Gemini is configured correctly"""
+    try:
+        # Check if API key is set
+        api_key_set = bool(settings.GEMINI_API_KEY)
+        
+        # Try a simple test with Gemini if key exists
+        gemini_test = None
+        if api_key_set:
+            try:
+                # Just check if we can create the processor
+                test_processor = GeminiDocumentProcessor()
+                gemini_test = "Processor initialized successfully"
+            except Exception as e:
+                gemini_test = f"Processor initialization failed: {str(e)}"
+        
+        return {
+            "success": True,
+            "message": "Upload API is working",
+            "config": {
+                "api_key_set": api_key_set,
+                "model": settings.GEMINI_MODEL,
+                "document_types": settings.DOCUMENT_TYPES,
+                "max_file_size": settings.MAX_FILE_SIZE,
+                "allowed_extensions": list(settings.ALLOWED_EXTENSIONS),
+                "gemini_test": gemini_test
+            }
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+# Endpoint to list all document types
+@router.get("/types")
+async def get_document_types():
+    """Get list of supported document types"""
+    return {
+        "success": True,
+        "document_types": settings.DOCUMENT_TYPES,
+        "document_table_map": settings.DOCUMENT_TABLE_MAP
+    }
+
+# Endpoint to get all documents for current user
+@router.get("/my-documents")
+async def get_my_documents(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all documents uploaded by current user across all types"""
+    
+    logger.info(f"📋 Fetching all documents for user {current_user.farmer_id}")
+    
+    all_documents = []
+    
+    for doc_type, table_name in settings.DOCUMENT_TABLE_MAP.items():
+        try:
+            query = f"SELECT * FROM {table_name} WHERE farmer_id = :farmer_id ORDER BY created_at DESC"
+            result = db.execute(text(query), {'farmer_id': current_user.farmer_id}).fetchall()
+            
+            for row in result:
+                doc_dict = dict(row._mapping)
+                doc_dict['document_type'] = doc_type
+                all_documents.append(doc_dict)
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Could not fetch from {table_name}: {str(e)}")
+            continue
+    
+    return {
+        "success": True,
+        "count": len(all_documents),
+        "documents": all_documents
     }
