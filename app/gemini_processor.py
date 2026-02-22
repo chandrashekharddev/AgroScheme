@@ -1,4 +1,4 @@
-# app/gemini_processor.py
+# app/gemini_processor.py - UPDATED TO USE CONFIG
 
 import os
 import google.generativeai as genai
@@ -10,32 +10,30 @@ import base64
 from pdf2image import convert_from_bytes
 import re
 from datetime import datetime
+from app.config import settings  # ✅ Import settings
 
-# Configure Gemini - Get API key from environment variable
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# Configure Gemini using settings
+GEMINI_API_KEY = settings.GEMINI_API_KEY
+GEMINI_MODEL = settings.GEMINI_MODEL
+
 if not GEMINI_API_KEY:
     print("⚠️ WARNING: GEMINI_API_KEY not set in environment variables")
+    print("Please add GEMINI_API_KEY to your Render environment variables")
+else:
+    print(f"✅ Gemini AI configured with model: {GEMINI_MODEL}")
     
 genai.configure(api_key=GEMINI_API_KEY)
 
 class GeminiDocumentProcessor:
     """Process Indian government documents using Gemini AI"""
     
-    def __init__(self, model_name="gemini-2.5-flash"):
-        self.model = genai.GenerativeModel(model_name)
+    def __init__(self, model_name=None):
+        # Use model from settings or default
+        self.model_name = model_name or GEMINI_MODEL
+        self.model = genai.GenerativeModel(self.model_name)
         
-        # Map document types to table names
-        self.doc_table_map = {
-            'aadhaar': 'aadhaar_documents',
-            'pan': 'pan_documents',
-            'land_record': 'land_records',
-            'bank_passbook': 'bank_documents',
-            'income_certificate': 'income_certificates',
-            'caste_certificate': 'caste_certificates',
-            'domicile': 'domicile_certificates',
-            'crop_insurance': 'crop_insurance_docs',
-            'death_certificate': 'death_certificates'
-        }
+        # Use document table map from settings
+        self.doc_table_map = settings.DOCUMENT_TABLE_MAP
     
     async def process_document(self, 
                                file_bytes: bytes, 
