@@ -89,13 +89,14 @@ async def startup_event():
         print(f"⚠️ Database initialization failed: {str(e)}")
     
     # ✅ CRITICAL FIX: Import and include routers WITHOUT duplicate prefixes
-    from app.routers import auth, farmers, schemes, documents, admin
+    from app.routers import auth, farmers, schemes, documents, admin, upload
     
     app.include_router(auth.router)      # Auth already has /auth prefix
     app.include_router(farmers.router)   # Farmers already has /farmers prefix
     app.include_router(schemes.router)   # Schemes already has /schemes prefix
     app.include_router(documents.router) # Documents already has /documents prefix
     app.include_router(admin.router)     # Admin already has /admin prefix
+    app.include_router(upload.router)
     
     print("✅ All routers loaded successfully")
     
