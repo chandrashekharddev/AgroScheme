@@ -1,4 +1,4 @@
-# app/config.py - COMPLETE FIXED VERSION
+# app/config.py - COMPLETE FIXED VERSION WITH GEMINI AI
 import os
 from dotenv import load_dotenv
 from typing import List
@@ -45,5 +45,60 @@ class Settings:
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
     ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
+    
+    # ==================== GEMINI AI CONFIGURATION ====================
+    # ✅ Gemini AI Configuration
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    
+    # Gemini Free Tier Limits
+    GEMINI_FREE_TIER_RPD: int = 500  # Requests per day (free tier limit)
+    GEMINI_MAX_IMAGE_SIZE: int = 20 * 1024 * 1024  # 20MB (Gemini limit)
+    
+    # Supported Indian languages for document processing
+    GEMINI_SUPPORTED_LANGUAGES: List[str] = [
+        "en",  # English
+        "hi",  # Hindi
+        "mr",  # Marathi
+        "ta",  # Tamil
+        "te",  # Telugu
+        "kn",  # Kannada
+        "ml",  # Malayalam
+        "gu",  # Gujarati
+        "pa",  # Punjabi
+        "bn",  # Bengali
+        "or",  # Odia
+        "ur"   # Urdu
+    ]
+    
+    # Document types supported for AI extraction
+    DOCUMENT_TYPES: List[str] = [
+        'aadhaar',
+        'pan',
+        'land_record',
+        'bank_passbook',
+        'income_certificate',
+        'caste_certificate',
+        'domicile',
+        'crop_insurance',
+        'death_certificate'
+    ]
+    
+    # Map document types to database tables
+    DOCUMENT_TABLE_MAP: dict = {
+        'aadhaar': 'aadhaar_documents',
+        'pan': 'pan_documents',
+        'land_record': 'land_records',
+        'bank_passbook': 'bank_documents',
+        'income_certificate': 'income_certificates',
+        'caste_certificate': 'caste_certificates',
+        'domicile': 'domicile_certificates',
+        'crop_insurance': 'crop_insurance_docs',
+        'death_certificate': 'death_certificates'
+    }
+    
+    # Auto-apply settings
+    AUTO_APPLY_ENABLED: bool = True
+    AUTO_APPLY_CHECK_INTERVAL: int = 3600  # Check every hour (in seconds)
 
 settings = Settings()
