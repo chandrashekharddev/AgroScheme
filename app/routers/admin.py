@@ -1,5 +1,5 @@
-# app/routers/admin.py - COMPLETE FIXED VERSION
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
+# app/routers/admin.py - COMPLETE FIXED VERSION WITH AUTO-APPLY
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, BackgroundTasks  # ✅ Added BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func, extract
 from typing import List, Optional, Dict, Any
@@ -15,6 +15,11 @@ from app.crud import (
     get_document_by_id, update_document_verification, mark_notification_as_read,
     get_user_applications, get_user_documents
 )
+from app.eligibility_checker import run_auto_apply_check  # ✅ Import auto-apply function
+from app.config import settings  # ✅ Import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -588,9 +593,10 @@ async def update_application_status_admin(
 @router.post("/schemes", response_model=SchemeResponse)
 async def add_scheme(
     scheme: SchemeCreate,
+    background_tasks: BackgroundTasks,  # ✅ ADD THIS
     db: Session = Depends(get_db)
 ):
-    """Add a new government scheme"""
+    """Add a new government scheme and trigger auto-apply checks"""
     try:
         existing_scheme = get_scheme_by_code(db, scheme.scheme_code)
         if existing_scheme:
@@ -599,10 +605,23 @@ async def add_scheme(
                 detail=f"Scheme with code '{scheme.scheme_code}' already exists"
             )
         
-        return create_scheme(db=db, scheme=scheme, created_by="Administrator")
+        # Create the scheme
+        new_scheme = create_scheme(db=db, scheme=scheme, created_by="Administrator")
+        
+        # ✅ Add background task to check auto-apply for all users
+        if settings.AUTO_APPLY_ENABLED:
+            background_tasks.add_task(
+                run_auto_apply_check,
+                new_scheme.id
+            )
+            logger.info(f"✅ Auto-apply background task scheduled for scheme {new_scheme.id}")
+        
+        return new_scheme
+        
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Failed to add scheme: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to add scheme: {str(e)}"
