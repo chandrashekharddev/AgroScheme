@@ -258,26 +258,57 @@ async def get_farmer_documents(
     
     # Security check - only allow farmers to view their own documents or admins
     if current_user.farmer_id != farmer_id and current_user.role != "admin":
-        logger.error(f"❌ Unauthorized access: user {current_user.farmer_id} trying to access {farmer_id}")
+        logger.error(f"❌ Unauthorized access: user {current_user.farmer_id} trying to access farmer {farmer_id}")
         raise HTTPException(status_code=403, detail="Not authorized to view these documents")
     
+    # Validate document type
     if document_type not in settings.DOCUMENT_TABLE_MAP:
         logger.error(f"❌ Invalid document type: {document_type}")
         raise HTTPException(status_code=400, detail="Invalid document type")
     
     table_name = settings.DOCUMENT_TABLE_MAP[document_type]
+    logger.info(f"📋 Using table: {table_name}")
     
     try:
+        # Check if table exists
+        table_check = db.execute(text(f"""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = '{table_name}'
+            )
+        """)).scalar()
+        
+        if not table_check:
+            logger.error(f"❌ Table {table_name} does not exist")
+            return {
+                "success": True,
+                "document_type": document_type,
+                "count": 0,
+                "documents": [],
+                "warning": f"Table {table_name} does not exist"
+            }
+        
+        # Query the table
         query = f"SELECT * FROM {table_name} WHERE farmer_id = :farmer_id ORDER BY created_at DESC"
         result = db.execute(text(query), {'farmer_id': farmer_id}).fetchall()
         
-        # Convert to list of dicts
+        # Convert to list of dicts with proper serialization
         documents = []
         for row in result:
-            doc_dict = dict(row._mapping)
+            doc_dict = {}
+            for key, value in row._mapping.items():
+                # Handle datetime objects
+                if hasattr(value, 'isoformat'):
+                    doc_dict[key] = value.isoformat()
+                # Handle other types
+                elif value is None:
+                    doc_dict[key] = None
+                else:
+                    doc_dict[key] = str(value) if not isinstance(value, (int, float, bool)) else value
             documents.append(doc_dict)
         
-        logger.info(f"✅ Found {len(documents)} documents")
+        logger.info(f"✅ Found {len(documents)} documents in {table_name}")
         
         return {
             "success": True,
@@ -288,6 +319,8 @@ async def get_farmer_documents(
         
     except Exception as e:
         logger.error(f"❌ Database error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to fetch documents: {str(e)}")
 
 @router.get("/status/{document_id}")
@@ -298,45 +331,80 @@ async def get_document_status(
 ):
     """Get the processing status of a specific document"""
     
-    logger.info(f"📋 Checking status for document {document_id}")
+    logger.info(f"📋 Checking status for document ID: {document_id}")
     
-    document = db.query(Document).filter(Document.id == document_id).first()
-    
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
-    
-    # Security check
-    if document.user_id != current_user.id and current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Not authorized to view this document")
-    
-    status_info = {
-        "document_id": document.id,
-        "file_name": document.file_name,
-        "document_type": document.document_type,
-        "uploaded_at": document.uploaded_at.isoformat() if document.uploaded_at else None,
-        "extraction_status": document.extraction_status,
-        "extraction_table": document.extraction_table,
-        "extraction_id": document.extraction_id
-    }
-    
-    # If extraction was successful, fetch the extracted data
-    if document.extraction_status == "completed" and document.extraction_table and document.extraction_id:
-        try:
-            query = f"SELECT * FROM {document.extraction_table} WHERE id = :extraction_id"
-            result = db.execute(text(query), {'extraction_id': document.extraction_id}).first()
-            if result:
-                status_info["extracted_data"] = dict(result._mapping)
-        except Exception as e:
-            logger.error(f"❌ Failed to fetch extracted data: {str(e)}")
-            status_info["extracted_data_error"] = str(e)
-    
-    if document.extraction_error:
-        status_info["error"] = document.extraction_error
-    
-    return {
-        "success": True,
-        "status": status_info
-    }
+    try:
+        document = db.query(Document).filter(Document.id == document_id).first()
+        
+        if not document:
+            logger.error(f"❌ Document {document_id} not found")
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Security check
+        if document.user_id != current_user.id and current_user.role != "admin":
+            logger.error(f"❌ Unauthorized access: user {current_user.farmer_id} trying to access document {document_id}")
+            raise HTTPException(status_code=403, detail="Not authorized to view this document")
+        
+        status_info = {
+            "document_id": document.id,
+            "file_name": document.file_name,
+            "document_type": document.document_type,
+            "uploaded_at": document.uploaded_at.isoformat() if document.uploaded_at else None,
+            "extraction_status": document.extraction_status,
+            "extraction_table": document.extraction_table,
+            "extraction_id": document.extraction_id
+        }
+        
+        # If extraction was successful, fetch the extracted data
+        if document.extraction_status == "completed" and document.extraction_table and document.extraction_id:
+            try:
+                # Check if extraction table exists
+                table_check = db.execute(text(f"""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = '{document.extraction_table}'
+                    )
+                """)).scalar()
+                
+                if table_check:
+                    query = f"SELECT * FROM {document.extraction_table} WHERE id = :extraction_id"
+                    result = db.execute(text(query), {'extraction_id': document.extraction_id}).first()
+                    
+                    if result:
+                        # Convert to dict for JSON response
+                        extracted = {}
+                        for key, value in result._mapping.items():
+                            if hasattr(value, 'isoformat'):
+                                extracted[key] = value.isoformat()
+                            elif isinstance(value, (int, float, bool)):
+                                extracted[key] = value
+                            else:
+                                extracted[key] = str(value) if value else None
+                        status_info["extracted_data"] = extracted
+                else:
+                    logger.warning(f"⚠️ Extraction table {document.extraction_table} does not exist")
+                    status_info["extraction_table_missing"] = True
+                    
+            except Exception as e:
+                logger.error(f"❌ Failed to fetch extracted data: {str(e)}")
+                status_info["extracted_data_error"] = str(e)
+        
+        if document.extraction_error:
+            status_info["error"] = document.extraction_error
+        
+        return {
+            "success": True,
+            "status": status_info
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Unexpected error in get_document_status: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to get document status: {str(e)}")
 
 # ==================== DEBUG ENDPOINTS ====================
 
