@@ -9,6 +9,7 @@ from datetime import datetime
 import logging
 import json
 import asyncio
+import uuid
 from typing import List, Dict, Any, Optional, Tuple
 
 # Set up logging
@@ -362,16 +363,17 @@ class EligibilityChecker:
             }
     
     async def _create_auto_application(self, user: User, scheme: GovernmentScheme, eligibility: Dict) -> Application:
-        """Create an auto-application for a user"""
+        """Create an auto-application for a user with guaranteed unique ID"""
         
-        from app.crud import create_application
-        import random
-        import string
-        
-        # Generate application ID
+        # Generate a truly unique application ID using timestamp + UUID
+        # This ensures no duplicates even under high concurrency
         year = datetime.now().year
-        random_part = ''.join(random.choices(string.digits, k=6))
-        application_id = f"APP{year}{random_part}"
+        timestamp = datetime.now().strftime("%m%d%H%M%S%f")  # Microsecond precision (16 chars)
+        unique_id = str(uuid.uuid4()).replace('-', '')[:8]  # First 8 chars of UUID without hyphens
+        application_id = f"APP{year}{timestamp}{unique_id}"
+        
+        # Log the generated ID for debugging
+        logger.info(f"Generated application ID: {application_id}")
         
         # Prepare application data
         application_data = {
@@ -382,23 +384,57 @@ class EligibilityChecker:
             "scheme_code": scheme.scheme_code
         }
         
+        # Calculate applied amount
+        applied_amount = 0
+        if scheme.benefit_amount:
+            try:
+                # Try to convert to float, remove any non-numeric characters
+                amount_str = ''.join(c for c in scheme.benefit_amount if c.isdigit() or c == '.')
+                applied_amount = float(amount_str) if amount_str else 0
+            except:
+                applied_amount = 0
+        
         # Create application
         application = Application(
             user_id=user.id,
             scheme_id=scheme.id,
             application_id=application_id,
             status="PENDING",
-            applied_amount=float(scheme.benefit_amount) if scheme.benefit_amount else 0,
+            applied_amount=applied_amount,
             application_data=application_data,
             applied_at=datetime.now()
         )
         
-        self.db.add(application)
-        self.db.commit()
-        self.db.refresh(application)
+        # Add retry logic for absolute safety (though extremely unlikely with UUID approach)
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                self.db.add(application)
+                self.db.commit()
+                self.db.refresh(application)
+                logger.info(f"✅ Created application {application_id} for user {user.farmer_id}")
+                return application
+                
+            except Exception as e:
+                self.db.rollback()
+                
+                # Check if it's a duplicate key error (just in case)
+                if "duplicate key" in str(e).lower() and attempt < max_retries - 1:
+                    logger.warning(f"Duplicate application ID {application_id}, retrying... (attempt {attempt + 1})")
+                    
+                    # Generate a new ID with additional randomness
+                    year = datetime.now().year
+                    timestamp = datetime.now().strftime("%m%d%H%M%S%f")
+                    unique_id = str(uuid.uuid4()).replace('-', '')[:12]  # Longer UUID fragment
+                    application_id = f"APP{year}{timestamp}{unique_id}"
+                    application.application_id = application_id
+                else:
+                    # Re-raise if it's not a duplicate key error or we're out of retries
+                    logger.error(f"Failed to create application: {str(e)}")
+                    raise e
         
-        logger.info(f"✅ Created application {application_id} for user {user.farmer_id}")
-        return application
+        # If we get here, all retries failed
+        raise Exception(f"Failed to create application after {max_retries} attempts")
     
     async def _create_notification(self, user_id: int, title: str, message: str):
         """Create a notification for user"""
