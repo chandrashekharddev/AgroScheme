@@ -7,6 +7,8 @@ from datetime import datetime
 import os
 from pathlib import Path
 
+from app.models import GovernmentScheme
+
 from app.eligibility_checker import EligibilityChecker
 from app.database import get_db
 from app.schemas import UserResponse, UserUpdate, DocumentResponse, NotificationResponse, ApplicationResponse, DocumentCreate, SchemeResponse
