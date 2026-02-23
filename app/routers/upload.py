@@ -573,8 +573,11 @@ async def test_endpoint(current_user: User = Depends(get_current_user)):
         "document_types": settings.DOCUMENT_TYPES
     }
 
+# ==================== FIXED: TEST GEMINI ENDPOINT ====================
 @router.get("/test/gemini")
-async def test_gemini(current_user: User = Depends(get_current_user)):
+async def test_gemini(
+    current_user: User = Depends(get_current_user)  # ✅ Add this dependency
+):
     """Test if Gemini is configured correctly"""
     try:
         # Check if API key is set
@@ -592,7 +595,12 @@ async def test_gemini(current_user: User = Depends(get_current_user)):
         
         return {
             "success": True,
-            "message": "Upload API is working",
+            "message": "Gemini test endpoint",
+            "user": {
+                "id": current_user.id,
+                "farmer_id": current_user.farmer_id,
+                "name": current_user.full_name
+            },
             "config": {
                 "api_key_set": api_key_set,
                 "model": settings.GEMINI_MODEL,
@@ -603,10 +611,172 @@ async def test_gemini(current_user: User = Depends(get_current_user)):
             }
         }
     except Exception as e:
+        logger.error(f"❌ Gemini test error: {str(e)}")
         return {
             "success": False,
             "error": str(e)
         }
+
+# ==================== FIXED: DEBUG TABLES ENDPOINT ====================
+@router.get("/debug/tables")
+async def debug_tables(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)  # ✅ Add this dependency
+):
+    """Debug endpoint to check if document tables exist and have data"""
+    
+    logger.info(f"🔍 Debug tables for user: {current_user.farmer_id}")
+    
+    results = {}
+    
+    for doc_type, table_name in settings.DOCUMENT_TABLE_MAP.items():
+        try:
+            # Check if table exists
+            table_check = db.execute(text(f"""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = '{table_name}'
+                )
+            """)).scalar()
+            
+            results[table_name] = {
+                "exists": table_check,
+                "document_type": doc_type
+            }
+            
+            if table_check:
+                # Get total row count
+                total_count = db.execute(text(f"SELECT COUNT(*) FROM {table_name}")).scalar()
+                results[table_name]["total_rows"] = total_count
+                
+                # Get count for current user
+                user_count = db.execute(
+                    text(f"SELECT COUNT(*) FROM {table_name} WHERE farmer_id = :farmer_id"),
+                    {'farmer_id': current_user.farmer_id}
+                ).scalar()
+                results[table_name]["user_rows"] = user_count
+                
+                # Get sample data for current user
+                if user_count > 0:
+                    sample = db.execute(
+                        text(f"SELECT * FROM {table_name} WHERE farmer_id = :farmer_id LIMIT 1"),
+                        {'farmer_id': current_user.farmer_id}
+                    ).first()
+                    
+                    if sample:
+                        # Convert to dict for JSON serialization
+                        sample_dict = {}
+                        for key, value in sample._mapping.items():
+                            if hasattr(value, 'isoformat'):
+                                sample_dict[key] = value.isoformat()
+                            elif isinstance(value, (int, float, bool)):
+                                sample_dict[key] = value
+                            else:
+                                sample_dict[key] = str(value) if value else None
+                        results[table_name]["sample"] = sample_dict
+                    
+        except Exception as e:
+            results[table_name] = {
+                "error": str(e)
+            }
+    
+    return {
+        "success": True,
+        "user": {
+            "id": current_user.id,
+            "farmer_id": current_user.farmer_id,
+            "name": current_user.full_name
+        },
+        "tables": results
+    }
+
+# ==================== FIXED: STATUS ENDPOINT (already good) ====================
+@router.get("/status/{document_id}")
+async def get_document_status(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get the processing status of a specific document"""
+    
+    logger.info(f"📋 Checking status for document ID: {document_id} for user {current_user.farmer_id}")
+    
+    try:
+        document = db.query(Document).filter(Document.id == document_id).first()
+        
+        if not document:
+            logger.error(f"❌ Document {document_id} not found")
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Security check
+        if document.user_id != current_user.id and current_user.role != "admin":
+            logger.error(f"❌ Unauthorized access: user {current_user.farmer_id} trying to access document {document_id}")
+            raise HTTPException(status_code=403, detail="Not authorized to view this document")
+        
+        status_info = {
+            "document_id": document.id,
+            "user_id": document.user_id,
+            "farmer_id": current_user.farmer_id,
+            "file_name": document.file_name,
+            "document_type": document.document_type,
+            "uploaded_at": document.uploaded_at.isoformat() if document.uploaded_at else None,
+            "extraction_status": document.extraction_status,
+            "extraction_table": document.extraction_table,
+            "extraction_id": document.extraction_id
+        }
+        
+        # If extraction was successful, fetch the extracted data
+        if document.extraction_status == "completed" and document.extraction_table and document.extraction_id:
+            try:
+                # Check if extraction table exists
+                table_check = db.execute(text(f"""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = '{document.extraction_table}'
+                    )
+                """)).scalar()
+                
+                if table_check:
+                    query = f"SELECT * FROM {document.extraction_table} WHERE id = :extraction_id"
+                    result = db.execute(text(query), {'extraction_id': document.extraction_id}).first()
+                    
+                    if result:
+                        # Convert to dict for JSON response
+                        extracted = {}
+                        for key, value in result._mapping.items():
+                            if hasattr(value, 'isoformat'):
+                                extracted[key] = value.isoformat()
+                            elif isinstance(value, (int, float, bool)):
+                                extracted[key] = value
+                            else:
+                                extracted[key] = str(value) if value else None
+                        status_info["extracted_data"] = extracted
+                else:
+                    logger.warning(f"⚠️ Extraction table {document.extraction_table} does not exist")
+                    status_info["extraction_table_missing"] = True
+                    
+            except Exception as e:
+                logger.error(f"❌ Failed to fetch extracted data: {str(e)}")
+                status_info["extracted_data_error"] = str(e)
+        
+        if document.extraction_error:
+            status_info["error"] = document.extraction_error
+        
+        return {
+            "success": True,
+            "status": status_info
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Unexpected error in get_document_status: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to get document status: {str(e)}")
+        
 
 # ==================== UTILITY ENDPOINTS ====================
 
