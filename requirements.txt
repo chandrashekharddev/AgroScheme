@@ -10,16 +10,15 @@ sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
 alembic==1.12.1
 
-# OCR - FREE Solutions (UPDATED VERSIONS)
-paddlepaddle==2.6.2  # Changed from 2.6.1 to 2.6.2
-paddleocr==2.8.1     # Updated to latest stable
+# OCR - Using EasyOCR only (lighter, fewer dependencies)
 easyocr==1.7.1
 pdf2image==1.16.3
-opencv-python==4.8.1.78
+opencv-python-headless==4.8.1.78
 pillow==10.1.0
+numpy==1.24.3
+scipy==1.10.1  # Pinned version that works well
 
 # Image processing
-numpy==1.24.3
 scikit-image==0.22.0
 
 # Storage
