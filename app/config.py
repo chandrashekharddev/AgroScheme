@@ -1,7 +1,7 @@
-# app/config.py - COMPLETE FIXED VERSION WITH GEMINI AI
+# app/config.py - COMPLETE FIXED VERSION (NO GEMINI OCR)
 import os
 from dotenv import load_dotenv
-from typing import List
+from typing import List, Dict
 
 load_dotenv()
 
@@ -46,32 +46,34 @@ class Settings:
     ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
     
-    # ==================== GEMINI AI CONFIGURATION ====================
-    # ✅ Gemini AI Configuration
+    # ==================== GEMINI AI (ONLY FOR ELIGIBILITY CHECKING) ====================
+    # ✅ Keep Gemini ONLY for eligibility checking (not for OCR)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     
-    # Gemini Free Tier Limits
-    GEMINI_FREE_TIER_RPD: int = 500  # Requests per day (free tier limit)
-    GEMINI_MAX_IMAGE_SIZE: int = 20 * 1024 * 1024  # 20MB (Gemini limit)
+    # ==================== FREE OCR CONFIGURATION ====================
+    # ✅ OCR Engine Selection - Purely FREE!
+    OCR_ENGINE: str = os.getenv("OCR_ENGINE", "paddle")  # "paddle" or "easyocr"
+    OCR_USE_GPU: bool = os.getenv("OCR_USE_GPU", "false").lower() == "true"
+    OCR_CONFIDENCE_THRESHOLD: float = float(os.getenv("OCR_CONFIDENCE_THRESHOLD", "0.5"))
     
-    # Supported Indian languages for document processing
-    GEMINI_SUPPORTED_LANGUAGES: List[str] = [
+    # ✅ OCR Languages (Indian languages supported)
+    OCR_LANGUAGES: List[str] = [
         "en",  # English
         "hi",  # Hindi
         "mr",  # Marathi
         "ta",  # Tamil
         "te",  # Telugu
+        "bn",  # Bengali
+        "gu",  # Gujarati
         "kn",  # Kannada
         "ml",  # Malayalam
-        "gu",  # Gujarati
-        "pa",  # Punjabi
-        "bn",  # Bengali
         "or",  # Odia
+        "pa",  # Punjabi
         "ur"   # Urdu
     ]
     
-    # Document types supported for AI extraction
+    # ✅ Document types supported
     DOCUMENT_TYPES: List[str] = [
         'aadhaar',
         'pan',
@@ -84,7 +86,7 @@ class Settings:
         'death_certificate'
     ]
     
-    # Map document types to database tables
+    # ✅ Map document types to database tables
     DOCUMENT_TABLE_MAP: dict = {
         'aadhaar': 'aadhaar_documents',
         'pan': 'pan_documents',
@@ -97,7 +99,7 @@ class Settings:
         'death_certificate': 'death_certificates'
     }
     
-    # Auto-apply settings
+    # ✅ Auto-apply settings
     AUTO_APPLY_ENABLED: bool = True
     AUTO_APPLY_CHECK_INTERVAL: int = 3600  # Check every hour (in seconds)
 
