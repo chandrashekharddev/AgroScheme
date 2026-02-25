@@ -1,33 +1,41 @@
-# app/ocr_processor.py - COMPLETE FREE OCR (NO GEMINI)
 import os
+import cv2
+import numpy as np
 import re
 import json
 import logging
-import numpy as np
+from typing import Dict, Any, Optional, List, Tuple
 from PIL import Image
 import io
+import base64
 from datetime import datetime
-from typing import Dict, Any, Optional, List, Tuple
-import cv2
-from pdf2image import convert_from_bytes
+import pandas as pd
 
-# OCR Libraries
+# OCR Engines
 try:
     from paddleocr import PaddleOCR
     PADDLE_AVAILABLE = True
-    print("✅ PaddleOCR is available")
 except ImportError:
     PADDLE_AVAILABLE = False
-    print("⚠️ PaddleOCR not installed - run: pip install paddlepaddle paddleocr")
+    print("⚠️ PaddleOCR not available")
 
 try:
     import easyocr
     EASYOCR_AVAILABLE = True
-    print("✅ EasyOCR is available")
 except ImportError:
     EASYOCR_AVAILABLE = False
-    print("⚠️ EasyOCR not installed - run: pip install easyocr")
+    print("⚠️ EasyOCR not available")
 
+# Layout Parser
+try:
+    import layoutparser as lp
+    LAYOUTPARSER_AVAILABLE = True
+except ImportError:
+    LAYOUTPARSER_AVAILABLE = False
+    print("⚠️ LayoutParser not available")
+
+# Image Processing
+from pdf2image import convert_from_bytes
 from app.config import settings
 
 # Set up logging
@@ -35,168 +43,128 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class OCRDocumentProcessor:
-    """Extract data from Indian government documents using FREE OCR (NO GEMINI)"""
+    """Process Indian government documents using OCR + Layout Analysis + KIE"""
     
-    def __init__(self, engine: str = None):
-        """
-        Initialize OCR processor
-        
-        Args:
-            engine: 'paddle' or 'easyocr' (default from settings)
-        """
-        self.engine = engine or settings.OCR_ENGINE
-        self.languages = settings.OCR_LANGUAGES
-        self.confidence_threshold = settings.OCR_CONFIDENCE_THRESHOLD
+    def __init__(self):
+        self.ocr_engine = settings.OCR_ENGINE
         self.use_gpu = settings.OCR_USE_GPU
+        self.confidence_threshold = settings.OCR_CONFIDENCE_THRESHOLD
+        self.use_layout = settings.USE_LAYOUT_PARSER
         
-        logger.info(f"🚀 Initializing FREE OCR processor with engine: {self.engine}")
-        logger.info(f"📚 Languages: {self.languages}")
-        logger.info(f"🎮 Use GPU: {self.use_gpu}")
+        # Initialize OCR engines
+        self._init_ocr()
         
-        # Initialize OCR engine
-        self.reader = self._initialize_reader()
+        # Initialize Layout Parser if available
+        if self.use_layout and LAYOUTPARSER_AVAILABLE:
+            self._init_layout_parser()
         
-        # Document table map from settings
-        self.doc_table_map = settings.DOCUMENT_TABLE_MAP
+        # Document type field mappings
+        self.field_mappings = settings.DOCUMENT_FIELD_MAPPINGS
         
-        if not self.reader:
-            logger.error("❌ No OCR engine available!")
+        logger.info(f"✅ OCR Processor initialized with engine: {self.ocr_engine}")
     
-    def _initialize_reader(self):
-        """Initialize the selected OCR engine"""
-        
-        # Try PaddleOCR first if selected
-        if self.engine == "paddle" and PADDLE_AVAILABLE:
+    def _init_ocr(self):
+        """Initialize selected OCR engine"""
+        if self.ocr_engine == "paddle" and PADDLE_AVAILABLE:
             try:
-                logger.info("📡 Initializing PaddleOCR...")
-                
-                return PaddleOCR(
+                self.paddle_ocr = PaddleOCR(
                     use_angle_cls=True,
-                    lang='en',  # PaddleOCR handles multilingual automatically
-                    show_log=False,
+                    lang=settings.OCR_LANG,
                     use_gpu=self.use_gpu,
-                    ocr_version='PP-OCRv4'
+                    show_log=False,
+                    rec_algorithm='SVTR_LCNet',
+                    det_db_thresh=0.3,
+                    det_db_box_thresh=0.5,
+                    det_db_unclip_ratio=1.6,
+                    max_batch_size=settings.OCR_BATCH_SIZE
                 )
+                logger.info("✅ PaddleOCR initialized")
             except Exception as e:
-                logger.error(f"❌ PaddleOCR initialization failed: {e}")
-                logger.info("⚠️ Falling back to EasyOCR...")
-                self.engine = "easyocr"
+                logger.error(f"❌ Failed to initialize PaddleOCR: {e}")
+                self.paddle_ocr = None
         
-        # Try EasyOCR
-        if (self.engine == "easyocr" or not PADDLE_AVAILABLE) and EASYOCR_AVAILABLE:
+        elif self.ocr_engine == "easyocr" and EASYOCR_AVAILABLE:
             try:
-                logger.info("📡 Initializing EasyOCR...")
-                
-                # EasyOCR language mapping
-                easyocr_langs = []
-                lang_map = {
-                    'en': 'en', 'hi': 'hi', 'mr': 'mr', 'ta': 'ta',
-                    'te': 'te', 'bn': 'bn', 'gu': 'gu', 'kn': 'kn',
-                    'ml': 'ml', 'or': 'or', 'pa': 'pa', 'ur': 'ur'
-                }
-                
-                for lang in self.languages:
-                    if lang in lang_map:
-                        easyocr_langs.append(lang_map[lang])
-                
-                if not easyocr_langs:
-                    easyocr_langs = ['en']
-                
-                logger.info(f"📚 EasyOCR languages: {easyocr_langs}")
-                
-                return easyocr.Reader(
-                    easyocr_langs,
-                    gpu=self.use_gpu,
-                    model_storage_directory='~/.easyocr/model',
-                    download_enabled=True
-                )
+                self.easy_ocr = easyocr.Reader([settings.OCR_LANG], gpu=self.use_gpu)
+                logger.info("✅ EasyOCR initialized")
             except Exception as e:
-                logger.error(f"❌ EasyOCR initialization failed: {e}")
-        
-        logger.error("❌ No OCR engine could be initialized!")
-        return None
+                logger.error(f"❌ Failed to initialize EasyOCR: {e}")
+                self.easy_ocr = None
     
-    async def process_document(self,
-                               file_bytes: bytes,
-                               file_name: str,
+    def _init_layout_parser(self):
+        """Initialize Layout Parser for document structure analysis"""
+        try:
+            # Use pre-trained model for document layout analysis
+            self.layout_model = lp.Detectron2LayoutModel(
+                settings.LAYOUT_MODEL,
+                extra_config=[
+                    "MODEL.ROI_HEADS.SCORE_THRESH_TEST", 0.5,
+                    "MODEL.DEVICE", "cuda" if self.use_gpu else "cpu"
+                ],
+                label_map={0: "Text", 1: "Title", 2: "List", 3: "Table", 4: "Figure"}
+            )
+            logger.info("✅ Layout Parser initialized")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Layout Parser: {e}")
+            self.use_layout = False
+    
+    async def process_document(self, 
+                               file_bytes: bytes, 
+                               file_name: str, 
                                document_type: str,
                                farmer_id: str) -> Dict[str, Any]:
         """
-        Extract structured data from document using FREE OCR
+        Extract structured data from any document using OCR + Layout Analysis
         
         Args:
             file_bytes: Raw file bytes
-            file_name: Original filename
+            file_name: Original file name
             document_type: Type of document (aadhaar, pan, etc.)
-            farmer_id: Farmer ID for linking
-        
+            farmer_id: Farmer ID
+            
         Returns:
             Dictionary with extracted data
         """
         try:
             logger.info(f"🔍 Processing {document_type} document for farmer {farmer_id}")
             
-            if not self.reader:
-                return {
-                    "success": False,
-                    "error": "OCR engine not initialized. Please check your installation."
-                }
-            
             # Convert to image if PDF
-            images = await self._convert_to_images(file_bytes, file_name)
+            image = await self._convert_to_image(file_bytes, file_name)
+            if image is None:
+                return {"success": False, "error": "Failed to convert document to image"}
             
-            if not images:
-                return {
-                    "success": False,
-                    "error": "Could not convert document to image"
-                }
+            # Step 1: Layout Analysis (if enabled)
+            layout_results = None
+            if self.use_layout:
+                layout_results = self._analyze_layout(image)
             
-            # Process each page (max 3 pages)
-            all_text = []
-            all_boxes = []
+            # Step 2: OCR Processing
+            ocr_results = await self._perform_ocr(image)
             
-            for i, image in enumerate(images[:3]):
-                logger.info(f"📄 Processing page {i+1}/{min(len(images), 3)}")
-                
-                # Preprocess image for better OCR
-                processed_image = self._preprocess_image(image)
-                
-                # Perform OCR based on engine
-                if self.engine == "paddle" and PADDLE_AVAILABLE:
-                    result = self.reader.ocr(np.array(processed_image), cls=True)
-                    page_text, page_boxes = self._parse_paddle_result(result)
-                else:
-                    result = self.reader.readtext(np.array(processed_image))
-                    page_text, page_boxes = self._parse_easyocr_result(result)
-                
-                all_text.extend(page_text)
-                all_boxes.extend(page_boxes)
+            # Step 3: Extract structured data based on document type
+            extracted_data = self._extract_structured_data(
+                ocr_results, 
+                document_type,
+                layout_results
+            )
             
-            # Combine all text
-            full_text = " ".join(all_text)
-            logger.info(f"📝 Extracted text length: {len(full_text)} chars")
-            
-            # Extract structured data based on document type
-            extracted_data = self._extract_structured_data(full_text, document_type)
-            
-            # Add metadata
-            extracted_data['farmer_id'] = farmer_id
-            extracted_data['processed_at'] = datetime.now().isoformat()
-            extracted_data['ocr_engine'] = self.engine
-            extracted_data['confidence'] = self._calculate_confidence(all_boxes)
-            
-            # Validate and clean data
+            # Step 4: Post-process and validate
             cleaned_data = self._validate_and_clean(extracted_data, document_type)
             
+            # Add metadata
+            cleaned_data['farmer_id'] = farmer_id
+            cleaned_data['processed_at'] = datetime.now().isoformat()
+            cleaned_data['ocr_engine'] = self.ocr_engine
+            cleaned_data['confidence_score'] = self._calculate_confidence(extracted_data, document_type)
+            
             logger.info(f"✅ Successfully extracted data from {document_type}")
-            logger.info(f"📊 Extracted fields: {list(cleaned_data.keys())}")
             
             return {
                 "success": True,
-                "table_name": self.doc_table_map.get(document_type, 'documents'),
+                "table_name": settings.DOCUMENT_TABLE_MAP.get(document_type, 'documents'),
                 "extracted_data": cleaned_data,
-                "raw_text": full_text[:500],
-                "confidence": extracted_data.get('confidence', 0.7)
+                "confidence": cleaned_data['confidence_score'],
+                "ocr_text": ocr_results.get('full_text', '')[:500]  # Store preview
             }
             
         except Exception as e:
@@ -208,502 +176,687 @@ class OCRDocumentProcessor:
                 "error": str(e)
             }
     
-    async def _convert_to_images(self, file_bytes: bytes, file_name: str) -> List[Image.Image]:
-        """Convert PDF to images or return single image"""
-        images = []
-        
+    async def _convert_to_image(self, file_bytes: bytes, file_name: str) -> Optional[np.ndarray]:
+        """Convert PDF or image to numpy array for processing"""
         try:
             if file_name.lower().endswith('.pdf'):
-                # Convert PDF to images
-                images = convert_from_bytes(
-                    file_bytes,
-                    first_page=1,
-                    last_page=3,
-                    fmt='jpeg',
-                    dpi=200
-                )
-                logger.info(f"✅ Converted PDF to {len(images)} images")
+                # Convert PDF to image
+                images = convert_from_bytes(file_bytes, first_page=1, last_page=1)
+                if not images:
+                    return None
+                # Convert PIL to numpy array
+                return cv2.cvtColor(np.array(images[0]), cv2.COLOR_RGB2BGR)
             else:
-                # Single image
-                image = Image.open(io.BytesIO(file_bytes))
-                if image.mode != 'RGB':
-                    image = image.convert('RGB')
-                images.append(image)
-                logger.info("✅ Loaded single image")
+                # Read image bytes
+                nparr = np.frombuffer(file_bytes, np.uint8)
+                return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         except Exception as e:
-            logger.error(f"❌ Image conversion error: {str(e)}")
-        
-        return images
+            logger.error(f"❌ Image conversion error: {e}")
+            return None
     
-    def _preprocess_image(self, image: Image.Image) -> Image.Image:
-        """Preprocess image for better OCR accuracy"""
+    def _analyze_layout(self, image: np.ndarray) -> Dict:
+        """Analyze document layout to identify text regions"""
+        if not self.use_layout:
+            return {}
+        
         try:
-            # Convert PIL to OpenCV
-            img = np.array(image)
-            if len(img.shape) == 3:
-                gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            # Convert to RGB for layout parser
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+            # Detect layout
+            layout = self.layout_model.detect(image_rgb)
+            
+            # Organize by type
+            text_blocks = []
+            title_blocks = []
+            table_blocks = []
+            
+            for block in layout:
+                if block.type == 'Text':
+                    text_blocks.append(block)
+                elif block.type == 'Title':
+                    title_blocks.append(block)
+                elif block.type == 'Table':
+                    table_blocks.append(block)
+            
+            return {
+                'text_regions': [b.block.coordinates for b in text_blocks],
+                'title_regions': [b.block.coordinates for b in title_blocks],
+                'table_regions': [b.block.coordinates for b in table_blocks]
+            }
+        except Exception as e:
+            logger.error(f"❌ Layout analysis error: {e}")
+            return {}
+    
+    async def _perform_ocr(self, image: np.ndarray) -> Dict[str, Any]:
+        """Perform OCR based on selected engine"""
+        results = {
+            'full_text': '',
+            'text_blocks': [],
+            'words': [],
+            'confidences': []
+        }
+        
+        try:
+            if self.ocr_engine == "paddle" and self.paddle_ocr:
+                # PaddleOCR returns [boxes, text, confidence]
+                paddle_result = self.paddle_ocr.ocr(image, cls=True)
+                
+                if paddle_result and paddle_result[0]:
+                    full_text_parts = []
+                    for line in paddle_result[0]:
+                        if len(line) >= 2:
+                            box, (text, confidence) = line[0], line[1]
+                            if confidence >= self.confidence_threshold:
+                                full_text_parts.append(text)
+                                results['words'].append({
+                                    'text': text,
+                                    'confidence': confidence,
+                                    'bbox': box
+                                })
+                                results['confidences'].append(confidence)
+                    
+                    results['full_text'] = ' '.join(full_text_parts)
+            
+            elif self.ocr_engine == "easyocr" and self.easy_ocr:
+                # EasyOCR returns [bbox, text, confidence]
+                easy_result = self.easy_ocr.readtext(image)
+                
+                for (bbox, text, confidence) in easy_result:
+                    if confidence >= self.confidence_threshold:
+                        results['words'].append({
+                            'text': text,
+                            'confidence': confidence,
+                            'bbox': bbox
+                        })
+                        results['confidences'].append(confidence)
+                
+                results['full_text'] = ' '.join([w['text'] for w in results['words']])
+            
             else:
-                gray = img
+                # Fallback to simple message
+                results['full_text'] = "OCR engine not available"
             
-            # Denoise
-            denoised = cv2.fastNlMeansDenoising(gray, h=30)
-            
-            # Increase contrast
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-            enhanced = clahe.apply(denoised)
-            
-            # Thresholding
-            _, thresh = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            
-            # Convert back to PIL
-            processed = Image.fromarray(thresh)
-            return processed
+            logger.info(f"✅ OCR completed: extracted {len(results['words'])} words")
             
         except Exception as e:
-            logger.warning(f"⚠️ Image preprocessing failed: {e}")
-            return image
+            logger.error(f"❌ OCR execution error: {e}")
+            results['error'] = str(e)
+        
+        return results
     
-    def _parse_paddle_result(self, result) -> Tuple[List[str], List[Dict]]:
-        """Parse PaddleOCR result to text and confidence boxes"""
-        texts = []
-        boxes = []
+    def _extract_structured_data(self, 
+                                 ocr_results: Dict, 
+                                 document_type: str,
+                                 layout_results: Dict = None) -> Dict[str, Any]:
+        """Extract structured data from OCR results based on document type"""
         
-        if not result:
-            return texts, boxes
+        full_text = ocr_results.get('full_text', '')
+        words = ocr_results.get('words', [])
         
-        for line in result:
-            for word_info in line:
-                text = word_info[1][0]
-                confidence = word_info[1][1]
-                
-                if confidence > self.confidence_threshold:
-                    texts.append(text)
-                    boxes.append({
-                        'text': text,
-                        'confidence': confidence,
-                        'bbox': word_info[0]
-                    })
+        extracted = {}
         
-        return texts, boxes
-    
-    def _parse_easyocr_result(self, result) -> Tuple[List[str], List[Dict]]:
-        """Parse EasyOCR result to text and confidence boxes"""
-        texts = []
-        boxes = []
-        
-        for (bbox, text, confidence) in result:
-            if confidence > self.confidence_threshold:
-                texts.append(text)
-                boxes.append({
-                    'text': text,
-                    'confidence': confidence,
-                    'bbox': bbox
-                })
-        
-        return texts, boxes
-    
-    def _calculate_confidence(self, boxes: List[Dict]) -> float:
-        """Calculate average confidence score"""
-        if not boxes:
-            return 0.0
-        
-        confidences = [b.get('confidence', 0) for b in boxes]
-        return sum(confidences) / len(confidences)
-    
-    def _extract_structured_data(self, text: str, document_type: str) -> Dict[str, Any]:
-        """Extract structured data based on document type using regex patterns"""
-        
+        # Document-specific extraction
         if document_type == 'aadhaar':
-            return self._extract_aadhaar(text)
+            extracted = self._extract_aadhaar(full_text, words)
         elif document_type == 'pan':
-            return self._extract_pan(text)
+            extracted = self._extract_pan(full_text, words)
         elif document_type == 'land_record':
-            return self._extract_land_record(text)
+            extracted = self._extract_land_record(full_text, words)
         elif document_type == 'bank_passbook':
-            return self._extract_bank_details(text)
+            extracted = self._extract_bank_passbook(full_text, words)
         elif document_type == 'income_certificate':
-            return self._extract_income_certificate(text)
+            extracted = self._extract_income_certificate(full_text, words)
         elif document_type == 'caste_certificate':
-            return self._extract_caste_certificate(text)
+            extracted = self._extract_caste_certificate(full_text, words)
         elif document_type == 'domicile':
-            return self._extract_domicile(text)
+            extracted = self._extract_domicile(full_text, words)
         elif document_type == 'crop_insurance':
-            return self._extract_crop_insurance(text)
+            extracted = self._extract_crop_insurance(full_text, words)
         elif document_type == 'death_certificate':
-            return self._extract_death_certificate(text)
-        else:
-            return {"raw_text": text[:500]}
+            extracted = self._extract_death_certificate(full_text, words)
+        
+        # Add layout info if available
+        if layout_results:
+            extracted['_layout_info'] = {
+                'has_tables': len(layout_results.get('table_regions', [])) > 0,
+                'text_region_count': len(layout_results.get('text_regions', []))
+            }
+        
+        return extracted
     
-    def _extract_aadhaar(self, text: str) -> Dict[str, Any]:
-        """Extract Aadhaar card details using regex"""
-        data = {}
+    def _extract_aadhaar(self, text: str, words: List) -> Dict:
+        """Extract Aadhaar card data"""
+        extracted = {}
         
-        # Aadhaar number (12 digits, possibly with spaces)
-        aadhaar_pattern = r'\b(\d{4}[-.\s]?\d{4}[-.\s]?\d{4})\b'
-        match = re.search(aadhaar_pattern, text)
-        if match:
-            data['aadhaar_number'] = re.sub(r'\D', '', match.group(1))
+        # Extract Aadhaar number (12 digits, possibly with spaces)
+        aadhaar_pattern = r'(\d{4}\s?\d{4}\s?\d{4})'
+        aadhaar_match = re.search(aadhaar_pattern, text)
+        if aadhaar_match:
+            aadhaar = re.sub(r'\s', '', aadhaar_match.group(1))
+            extracted['aadhaar_number'] = aadhaar
         
-        # Name (English or Hindi)
-        name_patterns = [
-            r'(?:Name|नाम)[:\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
-            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})'
-        ]
-        for pattern in name_patterns:
-            match = re.search(pattern, text)
-            if match:
-                data['full_name'] = match.group(1).strip()
-                break
-        
-        # Date of Birth
+        # Extract date of birth
         dob_patterns = [
-            r'(?:DOB|Date of Birth|जन्म तिथि)[:\s]*(\d{2}[/-]\d{2}[/-]\d{4})',
+            r'DOB\s*:?\s*(\d{2}[/-]\d{2}[/-]\d{4})',
+            r'Birth\s*:?\s*(\d{2}[/-]\d{2}[/-]\d{4})',
             r'(\d{2}[/-]\d{2}[/-]\d{4})'
         ]
         for pattern in dob_patterns:
-            match = re.search(pattern, text)
-            if match:
-                data['date_of_birth'] = self._parse_date(match.group(1))
+            dob_match = re.search(pattern, text, re.IGNORECASE)
+            if dob_match:
+                extracted['date_of_birth'] = self._parse_date(dob_match.group(1))
                 break
         
-        # Gender
-        if re.search(r'\bMale\b|\bपुरुष\b', text, re.I):
-            data['gender'] = 'Male'
-        elif re.search(r'\bFemale\b|\bमहिला\b', text, re.I):
-            data['gender'] = 'Female'
+        # Extract gender
+        if re.search(r'Male|MALE|male', text):
+            extracted['gender'] = 'Male'
+        elif re.search(r'Female|FEMALE|female', text):
+            extracted['gender'] = 'Female'
+        elif re.search(r'Trans|TRANS|trans', text):
+            extracted['gender'] = 'Transgender'
         
-        # Address
-        address_pattern = r'(?:Address|पता)[:\s]*([^\n]+(?:\n[^\n]+){0,3})'
-        match = re.search(address_pattern, text)
-        if match:
-            data['address'] = match.group(1).strip()
+        # Extract name (usually before DOB or in specific format)
+        lines = text.split('\n')
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if line and len(line) > 5 and i < len(lines)-1:
+                next_line = lines[i+1] if i+1 < len(lines) else ""
+                # Check if next line contains DOB or year
+                if re.search(r'\d{4}', next_line) and not re.search(r'[0-9]', line):
+                    extracted['full_name'] = line.strip()
+                    break
         
-        # Mobile number
-        mobile_pattern = r'\b(\d{10})\b'
-        match = re.search(mobile_pattern, text)
-        if match:
-            data['mobile_number'] = match.group(1)
+        # Extract address
+        address_lines = []
+        in_address = False
+        for line in lines:
+            if re.search(r'Address|Add|ADDR', line, re.IGNORECASE):
+                in_address = True
+                continue
+            if in_address and line.strip():
+                if re.search(r'Pin|Pincode|P\.?O\.?', line, re.IGNORECASE):
+                    break
+                address_lines.append(line.strip())
         
-        return data
-    
-    def _extract_pan(self, text: str) -> Dict[str, Any]:
-        """Extract PAN card details"""
-        data = {}
+        if address_lines:
+            extracted['address'] = ' '.join(address_lines)
         
-        # PAN number (format: ABCDE1234F)
-        pan_pattern = r'\b([A-Z]{5}\d{4}[A-Z])\b'
-        match = re.search(pan_pattern, text, re.I)
-        if match:
-            data['pan_number'] = match.group(1).upper()
+        # Extract pincode
+        pincode_pattern = r'(\d{6})'
+        pincode_match = re.search(pincode_pattern, text)
+        if pincode_match:
+            extracted['pincode'] = pincode_match.group(1)
         
-        # Name
-        name_patterns = [
-            r'(?:Name|नाम)[:\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
-            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})'
+        # Extract mobile
+        mobile_pattern = r'Mobile|Mob|Phone.*?(\d{10})'
+        mobile_match = re.search(mobile_pattern, text, re.IGNORECASE)
+        if mobile_match:
+            extracted['mobile_number'] = mobile_match.group(1)
+        
+        # Extract father's name
+        father_patterns = [
+            r'Father|FATHER.*?[:\s]+([A-Za-z\s]+)',
+            r'S/O|S\.O\.|W/O.*?[:\s]+([A-Za-z\s]+)'
         ]
-        for pattern in name_patterns:
-            match = re.search(pattern, text)
-            if match:
-                data['full_name'] = match.group(1).strip()
+        for pattern in father_patterns:
+            father_match = re.search(pattern, text, re.IGNORECASE)
+            if father_match:
+                extracted['father_name'] = father_match.group(1).strip()
                 break
         
-        # Father's Name
-        father_pattern = r'(?:Father|पिता)[:\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)'
-        match = re.search(father_pattern, text, re.I)
-        if match:
-            data['father_name'] = match.group(1).strip()
-        
-        # Date of Birth
-        dob_pattern = r'(\d{2}[/-]\d{2}[/-]\d{4})'
-        match = re.search(dob_pattern, text)
-        if match:
-            data['date_of_birth'] = self._parse_date(match.group(1))
-        
-        return data
+        return extracted
     
-    def _extract_land_record(self, text: str) -> Dict[str, Any]:
-        """Extract land record (7/12) details"""
-        data = {}
+    def _extract_pan(self, text: str, words: List) -> Dict:
+        """Extract PAN card data"""
+        extracted = {}
         
-        # Survey number
+        # Extract PAN number (format: ABCDE1234F)
+        pan_pattern = r'[A-Z]{5}[0-9]{4}[A-Z]{1}'
+        pan_match = re.search(pan_pattern, text)
+        if pan_match:
+            extracted['pan_number'] = pan_match.group(0)
+        
+        # Extract name (usually capitalized, multiple words)
+        lines = text.split('\n')
+        for line in lines:
+            line = line.strip()
+            # Look for name lines (all caps, not containing PAN or Income Tax)
+            if line and line.isupper() and len(line.split()) >= 2:
+                if not re.search(r'INCOME|TAX|PAN|GOVT|INDIA', line):
+                    extracted['full_name'] = line
+                    break
+        
+        # Extract father's name
+        for line in lines:
+            if re.search(r"Father|FATHER|S/O|S\.O\.", line, re.IGNORECASE):
+                father_name = re.sub(r"Father|FATHER|S/O|S\.O\.|:", "", line, flags=re.IGNORECASE).strip()
+                if father_name:
+                    extracted['father_name'] = father_name
+                    break
+        
+        # Extract date of birth
+        dob_pattern = r'(\d{2}[/-]\d{2}[/-]\d{4})'
+        dob_match = re.search(dob_pattern, text)
+        if dob_match:
+            extracted['date_of_birth'] = self._parse_date(dob_match.group(1))
+        
+        # Determine PAN type
+        if 'individual' in text.lower():
+            extracted['pan_type'] = 'Individual'
+        elif 'company' in text.lower():
+            extracted['pan_type'] = 'Company'
+        elif 'trust' in text.lower():
+            extracted['pan_type'] = 'Trust'
+        
+        return extracted
+    
+    def _extract_land_record(self, text: str, words: List) -> Dict:
+        """Extract land record (7/12, 8A) data"""
+        extracted = {}
+        
+        # Extract survey number
         survey_patterns = [
-            r'(?:सर्वे|Survey)[:\s]*(\d+[/\d]*)',
-            r'(\d+[/\d]*)'
+            r'Survey\s*No\.?\s*:?\s*([A-Z0-9/\-]+)',
+            r'S\.No\.?\s*:?\s*([A-Z0-9/\-]+)',
+            r'Gat\s*No\.?\s*:?\s*([0-9]+)',
+            r'Plot\s*No\.?\s*:?\s*([0-9]+)'
         ]
         for pattern in survey_patterns:
-            match = re.search(pattern, text)
-            if match:
-                data['survey_number'] = match.group(1)
+            survey_match = re.search(pattern, text, re.IGNORECASE)
+            if survey_match:
+                extracted['survey_number'] = survey_match.group(1).strip()
                 break
         
-        # Land area in acres/hectares
+        # Extract land area
         area_patterns = [
-            r'(?:क्षेत्रफल|Area)[:\s]*([\d.]+)\s*(?:एकर|acres?)',
-            r'([\d.]+)\s*(?:हेक्टेअर|hectares?)'
+            r'Area\s*:?\s*([0-9.]+)\s*(?:Hector|Hec|Ha|Acres?)',
+            r'([0-9.]+)\s*(?:Hector|Hec|Ha)',
+            r'([0-9.]+)\s*(?:Acres?|Acre)'
         ]
         for pattern in area_patterns:
-            match = re.search(pattern, text, re.I)
-            if match:
-                if 'एकर' in pattern or 'acre' in pattern:
-                    data['land_area_acres'] = float(match.group(1))
+            area_match = re.search(pattern, text, re.IGNORECASE)
+            if area_match:
+                area_value = float(area_match.group(1)) if '.' in area_match.group(1) else int(area_match.group(1))
+                if 'acre' in pattern.lower() or 'acre' in text[area_match.end():area_match.end()+10].lower():
+                    extracted['land_area_acres'] = area_value
+                    extracted['land_area_hectares'] = area_value * 0.4047
                 else:
-                    data['land_area_hectares'] = float(match.group(1))
+                    extracted['land_area_hectares'] = area_value
+                    extracted['land_area_acres'] = area_value * 2.471
                 break
         
-        # Owner name
+        # Extract owner name
         owner_patterns = [
-            r'(?:मालक|Owner)[:\s]*([\u0900-\u097F\s]+)',
-            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3})'
+            r'Owner\s*:?\s*([A-Za-z\s]+)',
+            r'Name of\s*owner\s*:?\s*([A-Za-z\s]+)',
+            r'Occupant\s*:?\s*([A-Za-z\s]+)'
         ]
         for pattern in owner_patterns:
-            match = re.search(pattern, text)
-            if match:
-                data['owner_name'] = match.group(1).strip()
+            owner_match = re.search(pattern, text, re.IGNORECASE)
+            if owner_match:
+                extracted['owner_name'] = owner_match.group(1).strip()
                 break
         
-        # Village/Taluka/District
-        village_pattern = r'(?:गाव|Village)[:\s]*([\u0900-\u097F\s]+)'
-        match = re.search(village_pattern, text)
-        if match:
-            data['village_name'] = match.group(1).strip()
-        
-        taluka_pattern = r'(?:तालुका|Taluka)[:\s]*([\u0900-\u097F\s]+)'
-        match = re.search(taluka_pattern, text)
-        if match:
-            data['taluka'] = match.group(1).strip()
-        
-        district_pattern = r'(?:जिल्हा|District)[:\s]*([\u0900-\u097F\s]+)'
-        match = re.search(district_pattern, text)
-        if match:
-            data['district'] = match.group(1).strip()
-        
-        return data
-    
-    def _extract_bank_details(self, text: str) -> Dict[str, Any]:
-        """Extract bank passbook details"""
-        data = {}
-        
-        # Account number
-        account_patterns = [
-            r'(?:Account|खाता)[:\s]*(\d{9,18})',
-            r'(\d{9,18})'
+        # Extract village
+        village_patterns = [
+            r'Village\s*:?\s*([A-Za-z\s]+)',
+            r'Gram\s*:?\s*([A-Za-z\s]+)'
         ]
-        for pattern in account_patterns:
-            match = re.search(pattern, text)
-            if match:
-                data['account_number'] = match.group(1)
+        for pattern in village_patterns:
+            village_match = re.search(pattern, text, re.IGNORECASE)
+            if village_match:
+                extracted['village_name'] = village_match.group(1).strip()
                 break
         
-        # IFSC code
-        ifsc_pattern = r'\b([A-Z]{4}0[A-Z0-9]{6})\b'
-        match = re.search(ifsc_pattern, text, re.I)
-        if match:
-            data['ifsc_code'] = match.group(1).upper()
+        # Extract taluka
+        taluka_pattern = r'Taluka|Tehsil|Taluk\s*:?\s*([A-Za-z\s]+)'
+        taluka_match = re.search(taluka_pattern, text, re.IGNORECASE)
+        if taluka_match:
+            extracted['taluka'] = taluka_match.group(1).strip()
         
-        # Bank name
-        bank_patterns = [
-            r'(?:Bank|बैंक)[:\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)',
-            r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}\s+Bank)'
-        ]
-        for pattern in bank_patterns:
-            match = re.search(pattern, text, re.I)
-            if match:
-                data['bank_name'] = match.group(1).strip()
-                break
+        # Extract district
+        district_pattern = r'District|Dist\.?\s*:?\s*([A-Za-z\s]+)'
+        district_match = re.search(district_pattern, text, re.IGNORECASE)
+        if district_match:
+            extracted['district'] = district_match.group(1).strip()
         
-        # Account holder name
-        name_pattern = r'(?:Name|नाम)[:\s]*([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)'
-        match = re.search(name_pattern, text, re.I)
-        if match:
-            data['account_holder_name'] = match.group(1).strip()
+        # Extract state
+        state_pattern = r'State\s*:?\s*([A-Za-z\s]+)'
+        state_match = re.search(state_pattern, text, re.IGNORECASE)
+        if state_match:
+            extracted['state'] = state_match.group(1).strip()
         
-        return data
+        return extracted
     
-    def _extract_income_certificate(self, text: str) -> Dict[str, Any]:
-        """Extract income certificate details"""
-        data = {}
+    def _extract_bank_passbook(self, text: str, words: List) -> Dict:
+        """Extract bank passbook data"""
+        extracted = {}
         
-        # Certificate number
-        cert_pattern = r'(?:Certificate|प्रमाणपत्र)[:\s]*([A-Z0-9/_-]+)'
-        match = re.search(cert_pattern, text, re.I)
-        if match:
-            data['certificate_number'] = match.group(1)
+        # Extract account number (usually 9-18 digits)
+        account_pattern = r'A/C\s*No\.?\s*:?\s*([0-9]{9,18})'
+        account_match = re.search(account_pattern, text, re.IGNORECASE)
+        if account_match:
+            extracted['account_number'] = account_match.group(1)
+        else:
+            # Try to find long number sequences
+            numbers = re.findall(r'\b([0-9]{9,18})\b', text)
+            if numbers:
+                extracted['account_number'] = numbers[0]
         
-        # Annual income
+        # Extract IFSC code (format: ABCD0123456)
+        ifsc_pattern = r'[A-Z]{4}0[A-Z0-9]{6}'
+        ifsc_match = re.search(ifsc_pattern, text)
+        if ifsc_match:
+            extracted['ifsc_code'] = ifsc_match.group(0)
+        
+        # Extract bank name
+        bank_names = ['State Bank of India', 'SBI', 'Bank of India', 'Bank of Baroda', 
+                     'Punjab National Bank', 'PNB', 'Canara Bank', 'HDFC', 'ICICI']
+        for bank in bank_names:
+            if bank in text:
+                extracted['bank_name'] = bank
+                break
+        
+        # Extract account holder name
+        name_patterns = [
+            r'Name\s*:?\s*([A-Za-z\s]+)',
+            r'Account\s*Holder\s*:?\s*([A-Za-z\s]+)'
+        ]
+        for pattern in name_patterns:
+            name_match = re.search(pattern, text, re.IGNORECASE)
+            if name_match:
+                extracted['account_holder_name'] = name_match.group(1).strip()
+                break
+        
+        # Extract account type
+        if 'savings' in text.lower():
+            extracted['account_type'] = 'Savings'
+        elif 'current' in text.lower():
+            extracted['account_type'] = 'Current'
+        elif 'salary' in text.lower():
+            extracted['account_type'] = 'Salary'
+        
+        return extracted
+    
+    def _extract_income_certificate(self, text: str, words: List) -> Dict:
+        """Extract income certificate data"""
+        extracted = {}
+        
+        # Extract certificate number
+        cert_pattern = r'Certificate\s*No\.?\s*:?\s*([A-Z0-9/\-]+)'
+        cert_match = re.search(cert_pattern, text, re.IGNORECASE)
+        if cert_match:
+            extracted['certificate_number'] = cert_match.group(1).strip()
+        
+        # Extract annual income
         income_patterns = [
-            r'(?:Annual Income|वार्षिक उत्पन्न)[:\s]*[₹Rs.\s]*([\d,]+)',
-            r'([\d,]+)\s*(?:रुपये|rupees?)'
+            r'Annual\s*Income\s*:?\s*Rs\.?\s*([0-9,]+)',
+            r'Income\s*:?\s*Rs\.?\s*([0-9,]+)',
+            r'([0-9,]+)\s*(?:Rs\.?|Rupees?)'
         ]
         for pattern in income_patterns:
-            match = re.search(pattern, text, re.I)
-            if match:
-                income_str = match.group(1).replace(',', '')
+            income_match = re.search(pattern, text, re.IGNORECASE)
+            if income_match:
+                income_str = income_match.group(1).replace(',', '')
                 try:
-                    data['annual_income'] = float(income_str)
+                    extracted['annual_income'] = float(income_str)
                 except:
                     pass
                 break
         
-        # Issue date
-        date_pattern = r'(\d{2}[/-]\d{2}[/-]\d{4})'
-        dates = re.findall(date_pattern, text)
-        if dates:
-            data['issue_date'] = self._parse_date(dates[0])
-            if len(dates) > 1:
-                data['valid_until'] = self._parse_date(dates[1])
-        
-        return data
-    
-    def _extract_caste_certificate(self, text: str) -> Dict[str, Any]:
-        """Extract caste certificate details"""
-        data = {}
-        
-        # Certificate number
-        cert_pattern = r'(?:Certificate|प्रमाणपत्र)[:\s]*([A-Z0-9/_-]+)'
-        match = re.search(cert_pattern, text, re.I)
-        if match:
-            data['certificate_number'] = match.group(1)
-        
-        # Caste category
-        caste_categories = ['SC', 'ST', 'OBC', 'General', 'अनुसूचित जाती', 'अनुसूचित जमाती', 'इतर मागास वर्ग']
-        for category in caste_categories:
-            if category in text:
-                data['caste_category'] = category
+        # Extract issue date
+        issue_patterns = [
+            r'Issue\s*Date\s*:?\s*(\d{2}[/-]\d{2}[/-]\d{4})',
+            r'Date\s*of\s*Issue\s*:?\s*(\d{2}[/-]\d{2}[/-]\d{4})'
+        ]
+        for pattern in issue_patterns:
+            issue_match = re.search(pattern, text, re.IGNORECASE)
+            if issue_match:
+                extracted['issue_date'] = self._parse_date(issue_match.group(1))
                 break
         
-        # Name
-        name_pattern = r'(?:Name|नाम)[:\s]*([\u0900-\u097F\s]+)'
-        match = re.search(name_pattern, text)
-        if match:
-            data['full_name'] = match.group(1).strip()
+        # Extract issuing authority
+        authority_pattern = r'Issuing\s*Authority\s*:?\s*([A-Za-z\s]+)'
+        authority_match = re.search(authority_pattern, text, re.IGNORECASE)
+        if authority_match:
+            extracted['issuing_authority'] = authority_match.group(1).strip()
         
-        return data
+        return extracted
     
-    def _extract_domicile(self, text: str) -> Dict[str, Any]:
-        """Extract domicile certificate details"""
-        data = {}
+    def _extract_caste_certificate(self, text: str, words: List) -> Dict:
+        """Extract caste certificate data"""
+        extracted = {}
         
-        # Certificate number
-        cert_pattern = r'(?:Certificate|प्रमाणपत्र)[:\s]*([A-Z0-9/_-]+)'
-        match = re.search(cert_pattern, text, re.I)
-        if match:
-            data['certificate_number'] = match.group(1)
+        # Extract certificate number
+        cert_pattern = r'Certificate\s*No\.?\s*:?\s*([A-Z0-9/\-]+)'
+        cert_match = re.search(cert_pattern, text, re.IGNORECASE)
+        if cert_match:
+            extracted['certificate_number'] = cert_match.group(1).strip()
         
-        # Name
-        name_pattern = r'(?:Name|नाम)[:\s]*([\u0900-\u097F\s]+)'
-        match = re.search(name_pattern, text)
-        if match:
-            data['full_name'] = match.group(1).strip()
+        # Extract caste category
+        categories = ['SC', 'ST', 'OBC', 'General', 'NT', 'VJNT', 'SBC']
+        for cat in categories:
+            if cat in text.upper():
+                extracted['caste_category'] = cat
+                break
         
-        # Father's name
-        father_pattern = r'(?:Father|पिता)[:\s]*([\u0900-\u097F\s]+)'
-        match = re.search(father_pattern, text)
-        if match:
-            data['father_name'] = match.group(1).strip()
+        # Extract caste name
+        caste_pattern = r'Caste\s*:?\s*([A-Za-z\s]+)'
+        caste_match = re.search(caste_pattern, text, re.IGNORECASE)
+        if caste_match:
+            extracted['caste_name'] = caste_match.group(1).strip()
         
-        # Address
-        address_pattern = r'(?:Address|पता)[:\s]*([^\n]+(?:\n[^\n]+){0,2})'
-        match = re.search(address_pattern, text)
-        if match:
-            data['permanent_address'] = match.group(1).strip()
+        # Extract issue date
+        issue_pattern = r'Date\s*:?\s*(\d{2}[/-]\d{2}[/-]\d{4})'
+        issue_match = re.search(issue_pattern, text, re.IGNORECASE)
+        if issue_match:
+            extracted['issue_date'] = self._parse_date(issue_match.group(1))
         
-        return data
+        return extracted
     
-    def _extract_crop_insurance(self, text: str) -> Dict[str, Any]:
-        """Extract crop insurance document details"""
-        data = {}
+    def _extract_domicile(self, text: str, words: List) -> Dict:
+        """Extract domicile certificate data"""
+        extracted = {}
         
-        # Policy number
-        policy_pattern = r'(?:Policy|पॉलिसी)[:\s]*([A-Z0-9/_-]+)'
-        match = re.search(policy_pattern, text, re.I)
-        if match:
-            data['policy_number'] = match.group(1)
+        # Extract certificate number
+        cert_pattern = r'Certificate\s*No\.?\s*:?\s*([A-Z0-9/\-]+)'
+        cert_match = re.search(cert_pattern, text, re.IGNORECASE)
+        if cert_match:
+            extracted['certificate_number'] = cert_match.group(1).strip()
         
-        # Crop name
-        crop_pattern = r'(?:Crop|पीक)[:\s]*([\u0900-\u097F\s]+)'
-        match = re.search(crop_pattern, text)
-        if match:
-            data['crop_name'] = match.group(1).strip()
+        # Extract name
+        name_patterns = [
+            r'Name\s*:?\s*([A-Za-z\s]+)',
+            r'Shri|Smt\.?\s*([A-Za-z\s]+)'
+        ]
+        for pattern in name_patterns:
+            name_match = re.search(pattern, text, re.IGNORECASE)
+            if name_match:
+                extracted['full_name'] = name_match.group(1).strip()
+                break
         
-        # Sum insured
-        sum_pattern = r'(?:Sum Insured|बीमा रक्कम)[:\s]*[₹Rs.\s]*([\d,]+)'
-        match = re.search(sum_pattern, text, re.I)
-        if match:
-            sum_str = match.group(1).replace(',', '')
+        # Extract father's name
+        father_pattern = r'S/O|W/O|D/O\s*:?\s*([A-Za-z\s]+)'
+        father_match = re.search(father_pattern, text, re.IGNORECASE)
+        if father_match:
+            extracted['father_name'] = father_match.group(1).strip()
+        
+        # Extract address
+        address_pattern = r'Address|Resident\s*:?\s*([A-Za-z0-9\s,.-]+)'
+        address_match = re.search(address_pattern, text, re.IGNORECASE)
+        if address_match:
+            extracted['permanent_address'] = address_match.group(1).strip()
+        
+        # Extract district
+        district_pattern = r'District\s*:?\s*([A-Za-z\s]+)'
+        district_match = re.search(district_pattern, text, re.IGNORECASE)
+        if district_match:
+            extracted['district'] = district_match.group(1).strip()
+        
+        return extracted
+    
+    def _extract_crop_insurance(self, text: str, words: List) -> Dict:
+        """Extract crop insurance document data"""
+        extracted = {}
+        
+        # Extract policy number
+        policy_pattern = r'Policy\s*No\.?\s*:?\s*([A-Z0-9/\-]+)'
+        policy_match = re.search(policy_pattern, text, re.IGNORECASE)
+        if policy_match:
+            extracted['policy_number'] = policy_match.group(1).strip()
+        
+        # Extract crop name
+        crop_pattern = r'Crop\s*:?\s*([A-Za-z\s]+)'
+        crop_match = re.search(crop_pattern, text, re.IGNORECASE)
+        if crop_match:
+            extracted['crop_name'] = crop_match.group(1).strip()
+        
+        # Extract sum insured
+        sum_pattern = r'Sum\s*Insured\s*:?\s*Rs\.?\s*([0-9,]+)'
+        sum_match = re.search(sum_pattern, text, re.IGNORECASE)
+        if sum_match:
+            sum_str = sum_match.group(1).replace(',', '')
             try:
-                data['sum_insured'] = float(sum_str)
+                extracted['sum_insured'] = float(sum_str)
             except:
                 pass
         
-        return data
-    
-    def _extract_death_certificate(self, text: str) -> Dict[str, Any]:
-        """Extract death certificate details"""
-        data = {}
-        
-        # Certificate number
-        cert_pattern = r'(?:Certificate|प्रमाणपत्र)[:\s]*([A-Z0-9/_-]+)'
-        match = re.search(cert_pattern, text, re.I)
-        if match:
-            data['certificate_number'] = match.group(1)
-        
-        # Deceased name
-        name_pattern = r'(?:Name|नाम)[:\s]*([\u0900-\u097F\s]+)'
-        match = re.search(name_pattern, text)
-        if match:
-            data['deceased_name'] = match.group(1).strip()
-        
-        # Date of death
+        # Extract dates
         date_pattern = r'(\d{2}[/-]\d{2}[/-]\d{4})'
-        match = re.search(date_pattern, text)
-        if match:
-            data['date_of_death'] = self._parse_date(match.group(1))
+        dates = re.findall(date_pattern, text)
+        if len(dates) >= 2:
+            extracted['policy_start_date'] = self._parse_date(dates[0])
+            extracted['policy_end_date'] = self._parse_date(dates[1])
         
-        return data
+        return extracted
+    
+    def _extract_death_certificate(self, text: str, words: List) -> Dict:
+        """Extract death certificate data"""
+        extracted = {}
+        
+        # Extract deceased name
+        name_patterns = [
+            r'Name\s*of\s*Deceased\s*:?\s*([A-Za-z\s]+)',
+            r'Deceased\s*Name\s*:?\s*([A-Za-z\s]+)'
+        ]
+        for pattern in name_patterns:
+            name_match = re.search(pattern, text, re.IGNORECASE)
+            if name_match:
+                extracted['deceased_name'] = name_match.group(1).strip()
+                break
+        
+        # Extract date of death
+        death_pattern = r'Date\s*of\s*Death\s*:?\s*(\d{2}[/-]\d{2}[/-]\d{4})'
+        death_match = re.search(death_pattern, text, re.IGNORECASE)
+        if death_match:
+            extracted['date_of_death'] = self._parse_date(death_match.group(1))
+        
+        # Extract certificate number
+        cert_pattern = r'Certificate\s*No\.?\s*:?\s*([A-Z0-9/\-]+)'
+        cert_match = re.search(cert_pattern, text, re.IGNORECASE)
+        if cert_match:
+            extracted['certificate_number'] = cert_match.group(1).strip()
+        
+        # Extract place of death
+        place_pattern = r'Place\s*of\s*Death\s*:?\s*([A-Za-z\s,.-]+)'
+        place_match = re.search(place_pattern, text, re.IGNORECASE)
+        if place_match:
+            extracted['place_of_death'] = place_match.group(1).strip()
+        
+        return extracted
     
     def _validate_and_clean(self, data: Dict[str, Any], document_type: str) -> Dict[str, Any]:
         """Validate and clean data based on document type"""
         cleaned = {}
         
-        for key, value in data.items():
-            if value is None or value == '':
-                continue
+        # Get field mappings for document type
+        mappings = self.field_mappings.get(document_type, {})
+        required_fields = mappings.get('required', [])
+        optional_fields = mappings.get('optional', [])
+        patterns = mappings.get('patterns', {})
+        
+        # Clean based on document type
+        if document_type == 'aadhaar':
+            # Clean Aadhaar number
+            if 'aadhaar_number' in data:
+                aadhaar = re.sub(r'\D', '', str(data['aadhaar_number']))
+                if len(aadhaar) == 12:
+                    cleaned['aadhaar_number'] = aadhaar
             
-            # Clean specific fields
-            if key == 'aadhaar_number' and isinstance(value, str):
-                # Remove non-digits and ensure 12 digits
-                cleaned_num = re.sub(r'\D', '', value)
-                if len(cleaned_num) >= 12:
-                    cleaned[key] = cleaned_num[:12]
-                else:
-                    cleaned[key] = cleaned_num
+            # Clean date
+            if 'date_of_birth' in data:
+                cleaned['date_of_birth'] = self._parse_date(data['date_of_birth'])
             
-            elif key == 'pan_number' and isinstance(value, str):
-                # Clean PAN number
-                cleaned[key] = re.sub(r'[^A-Z0-9]', '', value.upper())
+            # Clean pincode
+            if 'pincode' in data:
+                pincode = re.sub(r'\D', '', str(data['pincode']))
+                if len(pincode) == 6:
+                    cleaned['pincode'] = pincode
             
-            elif key == 'ifsc_code' and isinstance(value, str):
-                # Clean IFSC code
-                cleaned[key] = re.sub(r'[^A-Z0-9]', '', value.upper())
-            
-            elif key in ['land_area_acres', 'land_area_hectares', 'annual_income', 
-                        'sum_insured', 'premium_amount']:
-                # Ensure numeric fields are numbers
+            # Pass through other fields
+            for field in required_fields + optional_fields:
+                if field in data and field not in cleaned:
+                    cleaned[field] = str(data[field])[:200]
+        
+        elif document_type == 'pan':
+            if 'pan_number' in data:
+                pan = re.sub(r'[^A-Z0-9]', '', str(data['pan_number']).upper())
+                cleaned['pan_number'] = pan
+            if 'date_of_birth' in data:
+                cleaned['date_of_birth'] = self._parse_date(data['date_of_birth'])
+            for field in required_fields + optional_fields:
+                if field in data and field not in cleaned:
+                    cleaned[field] = str(data[field])[:200]
+        
+        elif document_type == 'bank_passbook':
+            if 'ifsc_code' in data:
+                ifsc = re.sub(r'[^A-Z0-9]', '', str(data['ifsc_code']).upper())
+                cleaned['ifsc_code'] = ifsc
+            if 'account_number' in data:
+                acc = re.sub(r'\D', '', str(data['account_number']))
+                cleaned['account_number'] = acc
+            for field in required_fields + optional_fields:
+                if field in data and field not in cleaned:
+                    cleaned[field] = str(data[field])[:200]
+        
+        elif document_type == 'land_record':
+            for num_field in ['land_area_acres', 'land_area_hectares', 'land_value']:
+                if num_field in data:
+                    try:
+                        cleaned[num_field] = float(data[num_field])
+                    except:
+                        cleaned[num_field] = 0.0
+            for field in required_fields + optional_fields:
+                if field in data and field not in cleaned:
+                    cleaned[field] = str(data[field])[:200]
+        
+        elif document_type in ['income_certificate', 'caste_certificate', 'domicile']:
+            if 'annual_income' in data:
                 try:
-                    cleaned[key] = float(value)
-                except (ValueError, TypeError):
-                    pass
-            
-            elif key in ['date_of_birth', 'issue_date', 'valid_until', 
-                        'date_of_death', 'policy_start_date', 'policy_end_date']:
-                # Parse dates
-                parsed = self._parse_date(value)
-                if parsed:
-                    cleaned[key] = parsed
-            
-            else:
-                # Keep other fields as strings
-                cleaned[key] = str(value)[:500]  # Limit length
+                    cleaned['annual_income'] = float(data['annual_income'])
+                except:
+                    cleaned['annual_income'] = 0.0
+            for date_field in ['issue_date', 'valid_until', 'date_of_death']:
+                if date_field in data:
+                    cleaned[date_field] = self._parse_date(data[date_field])
+            for field in required_fields + optional_fields:
+                if field in data and field not in cleaned:
+                    cleaned[field] = str(data[field])[:500]
+        
+        elif document_type == 'crop_insurance':
+            for num_field in ['land_area_insured', 'sum_insured', 'premium_amount']:
+                if num_field in data:
+                    try:
+                        cleaned[num_field] = float(data[num_field])
+                    except:
+                        cleaned[num_field] = 0.0
+            for date_field in ['policy_start_date', 'policy_end_date']:
+                if date_field in data:
+                    cleaned[date_field] = self._parse_date(data[date_field])
+            for field in required_fields + optional_fields:
+                if field in data and field not in cleaned:
+                    cleaned[field] = str(data[field])[:200]
         
         return cleaned
     
@@ -716,9 +869,9 @@ class OCRDocumentProcessor:
         
         # Try common patterns
         patterns = [
-            (r'(\d{4})[-\/](\d{2})[-\/](\d{2})', 'ymd'),
-            (r'(\d{2})[-\/](\d{2})[-\/](\d{4})', 'dmy'),
-            (r'(\d{2})[-\/](\d{2})[-\/](\d{2})', 'dmyy'),
+            (r'(\d{4})[-\/](\d{2})[-\/](\d{2})', 'ymd'),  # YYYY-MM-DD
+            (r'(\d{2})[-\/](\d{2})[-\/](\d{4})', 'dmy'),  # DD-MM-YYYY
+            (r'(\d{2})[-\/](\d{2})[-\/](\d{2})', 'dmyy'), # DD-MM-YY
         ]
         
         for pattern, format_type in patterns:
@@ -736,8 +889,22 @@ class OCRDocumentProcessor:
                     else:
                         return f"20{year:02d}-{parts[1]}-{parts[0]}"
         
+        # If no pattern matches, return as is (first 10 chars)
         return date_str[:10]
-
-
-# Create singleton instance
-ocr_processor = OCRDocumentProcessor()
+    
+    def _calculate_confidence(self, data: Dict, document_type: str) -> float:
+        """Calculate overall confidence score for extraction"""
+        if not data:
+            return 0.0
+        
+        mappings = self.field_mappings.get(document_type, {})
+        required_fields = mappings.get('required', [])
+        
+        if not required_fields:
+            return 0.8  # Default confidence
+        
+        # Count how many required fields were extracted
+        found_fields = sum(1 for field in required_fields if field in data and data[field])
+        confidence = (found_fields / len(required_fields)) * 100
+        
+        return min(confidence, 100)  # Cap at 100
