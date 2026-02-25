@@ -1,14 +1,14 @@
+# app/routers/upload.py - COMPLETE FILE WITH FREE OCR (NO GEMINI)
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.database import get_db
 from app.models import User, Document
-from app.ocr_processor import OCRDocumentProcessor  # Changed from gemini_processor
+from app.ocr_processor import ocr_processor  # ✅ Using FREE OCR
 from app.supabase_storage import supabase_storage
 from app.utils.security import get_current_user
 from app.config import settings
 from datetime import datetime
-import mimetypes
 import logging
 import traceback
 
@@ -18,9 +18,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/upload", tags=["document-upload"])
 
-# Initialize OCR processor instead of Gemini
-processor = OCRDocumentProcessor()
-
 @router.post("/document")
 async def upload_document(
     file: UploadFile = File(...),
@@ -28,7 +25,7 @@ async def upload_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Upload and process any government document using OCR"""
+    """Upload and process any government document using FREE OCR"""
     
     logger.info(f"📤 Upload request: user={current_user.farmer_id}, type={document_type}, file={file.filename}")
     
@@ -87,16 +84,16 @@ async def upload_document(
         db.flush()  # Get document.id
         logger.info(f"✅ Document record created: ID={document.id}")
         
-        # Process with OCR
-        logger.info(f"🤖 Processing with OCR for {document_type}")
-        result = await processor.process_document(
+        # Process with FREE OCR
+        logger.info(f"🔍 Processing with FREE OCR for {document_type}")
+        result = await ocr_processor.process_document(
             file_bytes=file_bytes,
             file_name=file.filename,
             document_type=document_type,
             farmer_id=current_user.farmer_id
         )
         
-        logger.info(f"🤖 OCR result success: {result['success']}")
+        logger.info(f"🔍 OCR result success: {result.get('success')}")
         
         if result["success"]:
             # Insert into specific document table
@@ -104,10 +101,6 @@ async def upload_document(
             extracted_data = result["extracted_data"]
             extracted_data['document_id'] = document.id
             extracted_data['farmer_id'] = current_user.farmer_id
-            
-            # Remove layout info from extracted data before inserting to DB
-            if '_layout_info' in extracted_data:
-                del extracted_data['_layout_info']
             
             logger.info(f"📊 Extracted data keys: {list(extracted_data.keys())}")
             logger.info(f"📋 Target table: {table_name}")
@@ -126,12 +119,16 @@ async def upload_document(
                     logger.error(f"❌ Table {table_name} does not exist!")
                     document.extraction_status = "failed"
                     document.extraction_error = f"Table {table_name} does not exist"
+                    document.extraction_data = extracted_data
+                    document.confidence_score = result.get("confidence", 0.7)
                     db.commit()
+                    
                     return {
                         "success": True,
                         "message": "Document uploaded but table does not exist",
                         "document_id": document.id,
-                        "error": f"Table {table_name} does not exist"
+                        "warning": f"Table {table_name} does not exist",
+                        "extracted_data": extracted_data
                     }
             except Exception as table_error:
                 logger.error(f"❌ Error checking table: {str(table_error)}")
@@ -150,18 +147,20 @@ async def upload_document(
                 filtered_data = {k: v for k, v in extracted_data.items() if k in table_columns}
                 logger.info(f"🔍 Filtered data keys: {list(filtered_data.keys())}")
                 
-                if len(filtered_data) == 0:
-                    logger.error(f"❌ No matching columns found in table {table_name}")
-                    document.extraction_status = "failed"
-                    document.extraction_error = f"No matching columns in table {table_name}"
+                if not filtered_data:
+                    logger.warning(f"⚠️ No matching columns found in table {table_name}")
+                    # Store raw text in the documents table instead
+                    document.extraction_status = "partial"
+                    document.extraction_data = {"raw_text": result.get("raw_text", ""), **extracted_data}
+                    document.confidence_score = result.get("confidence", 0.7)
                     db.commit()
+                    
                     return {
                         "success": True,
                         "message": "Document uploaded but column mismatch",
                         "document_id": document.id,
-                        "error": "No matching columns in target table",
-                        "extracted_keys": list(extracted_data.keys()),
-                        "table_columns": table_columns
+                        "extracted_data": extracted_data,
+                        "warning": "No matching columns in target table"
                     }
                 
             except Exception as column_error:
@@ -169,70 +168,60 @@ async def upload_document(
                 filtered_data = extracted_data  # Fallback to original
             
             # Build insert query dynamically
-            if filtered_data:
-                columns = ', '.join(filtered_data.keys())
-                placeholders = ', '.join([f':{k}' for k in filtered_data.keys()])
+            columns = ', '.join(filtered_data.keys())
+            placeholders = ', '.join([f':{k}' for k in filtered_data.keys()])
+            
+            insert_query = f"""
+                INSERT INTO {table_name} ({columns})
+                VALUES ({placeholders})
+                RETURNING id
+            """
+            
+            logger.info(f"🔍 Insert query: {insert_query}")
+            logger.info(f"🔍 Data: {filtered_data}")
+            
+            try:
+                result_proxy = db.execute(text(insert_query), filtered_data)
+                record_id = result_proxy.scalar()
+                db.flush()  # Ensure ID is available
+                logger.info(f"✅ Data inserted into {table_name}: ID={record_id}")
                 
-                insert_query = f"""
-                    INSERT INTO {table_name} ({columns})
-                    VALUES ({placeholders})
-                    RETURNING id
-                """
-                
-                logger.info(f"🔍 Insert query: {insert_query}")
-                
-                try:
-                    result_proxy = db.execute(text(insert_query), filtered_data)
-                    record_id = result_proxy.scalar()
-                    db.flush()  # Ensure ID is available
-                    logger.info(f"✅ Data inserted into {table_name}: ID={record_id}")
-                    
-                    # Update document with extraction info
-                    document.extraction_id = record_id
-                    document.extraction_table = table_name
-                    document.extraction_status = "completed"
-                    document.extraction_data = filtered_data
-                    document.confidence_score = result.get("confidence", 0)
-                    
-                    db.commit()
-                    logger.info(f"✅ Database commit successful")
-                    
-                    return {
-                        "success": True,
-                        "message": f"{document_type.replace('_', ' ').title()} uploaded and processed successfully",
-                        "document_id": document.id,
-                        "extraction_id": record_id,
-                        "extracted_data": filtered_data,
-                        "confidence": result.get("confidence", 0)
-                    }
-                    
-                except Exception as db_error:
-                    logger.error(f"❌ Database insert error: {str(db_error)}")
-                    logger.error(traceback.format_exc())
-                    db.rollback()
-                    
-                    document.extraction_status = "failed"
-                    document.extraction_error = str(db_error)
-                    db.commit()
-                    
-                    return {
-                        "success": True,
-                        "message": "Document uploaded but database insertion failed",
-                        "document_id": document.id,
-                        "error": str(db_error),
-                        "extracted_data": filtered_data
-                    }
-            else:
-                # No data to insert
+                # Update document with extraction info
+                document.extraction_id = record_id
+                document.extraction_table = table_name
                 document.extraction_status = "completed"
-                document.extraction_data = {}
+                document.extraction_data = filtered_data
+                document.confidence_score = result.get("confidence", 0.7)
+                
+                db.commit()
+                logger.info(f"✅ Database commit successful")
+                
+                return {
+                    "success": True,
+                    "message": f"{document_type.replace('_', ' ').title()} uploaded and processed successfully",
+                    "document_id": document.id,
+                    "extraction_id": record_id,
+                    "extracted_data": filtered_data,
+                    "confidence": result.get("confidence", 0.7)
+                }
+                
+            except Exception as db_error:
+                logger.error(f"❌ Database insert error: {str(db_error)}")
+                logger.error(traceback.format_exc())
+                db.rollback()
+                
+                document.extraction_status = "failed"
+                document.extraction_error = str(db_error)
+                document.extraction_data = {"raw_text": result.get("raw_text", ""), **extracted_data}
+                document.confidence_score = result.get("confidence", 0.7)
                 db.commit()
                 
                 return {
                     "success": True,
-                    "message": "Document uploaded but no data extracted",
+                    "message": "Document uploaded but database insertion failed",
                     "document_id": document.id,
-                    "extracted_data": {}
+                    "error": str(db_error),
+                    "extracted_data": extracted_data
                 }
         else:
             logger.error(f"❌ OCR processing failed: {result.get('error')}")
@@ -261,9 +250,6 @@ async def upload_document(
             pass
             
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
-
-# All other endpoints (get_farmer_documents, get_document_status, debug_tables, etc.)
-# remain exactly the same as in your original upload.py
 
 @router.get("/{document_type}/{farmer_id}")
 async def get_farmer_documents(
@@ -373,7 +359,7 @@ async def get_document_status(
             "extraction_status": document.extraction_status,
             "extraction_table": document.extraction_table,
             "extraction_id": document.extraction_id,
-            "confidence_score": getattr(document, 'confidence_score', None)
+            "confidence_score": document.confidence_score
         }
         
         # If extraction was successful, fetch the extracted data
@@ -411,6 +397,10 @@ async def get_document_status(
                 logger.error(f"❌ Failed to fetch extracted data: {str(e)}")
                 status_info["extracted_data_error"] = str(e)
         
+        # If extraction data is stored directly in document (for partial/error cases)
+        if document.extraction_data and not status_info.get("extracted_data"):
+            status_info["extracted_data"] = document.extraction_data
+        
         if document.extraction_error:
             status_info["error"] = document.extraction_error
         
@@ -427,7 +417,78 @@ async def get_document_status(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to get document status: {str(e)}")
 
-# ==================== DEBUG ENDPOINTS ====================
+@router.get("/types")
+async def get_document_types():
+    """Get list of supported document types"""
+    return {
+        "success": True,
+        "document_types": settings.DOCUMENT_TYPES,
+        "document_table_map": settings.DOCUMENT_TABLE_MAP,
+        "ocr_engine": settings.OCR_ENGINE
+    }
+
+@router.get("/my-documents")
+async def get_my_documents(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Get all documents uploaded by current user across all types"""
+    
+    logger.info(f"📋 Fetching all documents for user {current_user.farmer_id}")
+    
+    all_documents = []
+    
+    for doc_type, table_name in settings.DOCUMENT_TABLE_MAP.items():
+        try:
+            query = f"SELECT * FROM {table_name} WHERE farmer_id = :farmer_id ORDER BY created_at DESC"
+            result = db.execute(text(query), {'farmer_id': current_user.farmer_id}).fetchall()
+            
+            for row in result:
+                doc_dict = dict(row._mapping)
+                # Convert datetime objects to strings
+                for key, value in doc_dict.items():
+                    if hasattr(value, 'isoformat'):
+                        doc_dict[key] = value.isoformat()
+                doc_dict['document_type'] = doc_type
+                all_documents.append(doc_dict)
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Could not fetch from {table_name}: {str(e)}")
+            continue
+    
+    return {
+        "success": True,
+        "count": len(all_documents),
+        "documents": all_documents
+    }
+
+@router.get("/test/ocr")
+async def test_ocr(current_user: User = Depends(get_current_user)):
+    """Test if OCR is configured correctly"""
+    
+    # Check if OCR processor is initialized
+    ocr_ready = ocr_processor.reader is not None
+    
+    # Get available languages
+    available_langs = []
+    if ocr_processor.engine == "easyocr" and ocr_processor.reader:
+        available_langs = ocr_processor.reader.lang_list if hasattr(ocr_processor.reader, 'lang_list') else []
+    
+    return {
+        "success": True,
+        "message": "OCR test endpoint",
+        "ocr_configured": ocr_ready,
+        "ocr_engine": settings.OCR_ENGINE,
+        "languages": settings.OCR_LANGUAGES,
+        "available_languages": available_langs,
+        "use_gpu": settings.OCR_USE_GPU,
+        "confidence_threshold": settings.OCR_CONFIDENCE_THRESHOLD,
+        "user": {
+            "id": current_user.id,
+            "farmer_id": current_user.farmer_id,
+            "name": current_user.full_name
+        }
+    }
 
 @router.get("/debug/tables")
 async def debug_tables(
@@ -435,6 +496,9 @@ async def debug_tables(
     current_user: User = Depends(get_current_user)
 ):
     """Debug endpoint to check if document tables exist and have data"""
+    
+    logger.info(f"🔍 Debug tables for user: {current_user.farmer_id}")
+    
     results = {}
     
     for doc_type, table_name in settings.DOCUMENT_TABLE_MAP.items():
@@ -491,195 +555,10 @@ async def debug_tables(
     
     return {
         "success": True,
-        "user_id": current_user.farmer_id,
-        "tables": results
-    }
-
-@router.post("/test-insert")
-async def test_insert(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Test endpoint to directly insert data into document table"""
-    
-    logger.info(f"🧪 Test insert for user {current_user.farmer_id}")
-    
-    try:
-        # First create a document record
-        test_document = Document(
-            user_id=current_user.id,
-            document_type="aadhaar",
-            file_path="test/path.jpg",
-            file_name="test.jpg",
-            file_size=1024,
-            uploaded_at=datetime.now()
-        )
-        db.add(test_document)
-        db.flush()
-        logger.info(f"✅ Test document created: ID={test_document.id}")
-        
-        # Test data for aadhaar table
-        test_data = {
+        "user": {
+            "id": current_user.id,
             "farmer_id": current_user.farmer_id,
-            "document_id": test_document.id,
-            "aadhaar_number": "123456789012",
-            "full_name": "Test User",
-            "date_of_birth": "1990-01-01",
-            "gender": "Male",
-            "address": "Test Address, Test City",
-            "pincode": "400001",
-            "father_name": "Test Father",
-            "mobile_number": "9876543210"
-        }
-        
-        # Check if aadhaar_documents table exists
-        table_check = db.execute(text("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'aadhaar_documents'
-            )
-        """)).scalar()
-        
-        if not table_check:
-            logger.error("❌ aadhaar_documents table does not exist!")
-            return {
-                "success": False,
-                "error": "aadhaar_documents table does not exist"
-            }
-        
-        # Try to insert into aadhaar_documents
-        insert_query = """
-            INSERT INTO aadhaar_documents 
-            (farmer_id, document_id, aadhaar_number, full_name, date_of_birth, gender, address, pincode, father_name, mobile_number)
-            VALUES 
-            (:farmer_id, :document_id, :aadhaar_number, :full_name, :date_of_birth, :gender, :address, :pincode, :father_name, :mobile_number)
-            RETURNING id
-        """
-        
-        logger.info(f"🔍 Test data: {test_data}")
-        
-        result = db.execute(text(insert_query), test_data)
-        record_id = result.scalar()
-        
-        # Update test document
-        test_document.extraction_id = record_id
-        test_document.extraction_table = "aadhaar_documents"
-        test_document.extraction_status = "completed"
-        test_document.extraction_data = test_data
-        
-        db.commit()
-        logger.info(f"✅ Test data inserted successfully: ID={record_id}")
-        
-        return {
-            "success": True,
-            "message": "Test data inserted successfully",
-            "document_id": test_document.id,
-            "record_id": record_id
-        }
-        
-    except Exception as e:
-        db.rollback()
-        logger.error(f"❌ Test insert failed: {str(e)}")
-        logger.error(traceback.format_exc())
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
-# ==================== TEST ENDPOINTS ====================
-
-@router.get("/test")
-async def test_endpoint(current_user: User = Depends(get_current_user)):
-    """Test if upload API is working"""
-    return {
-        "success": True,
-        "message": "Upload API is working",
-        "user": current_user.farmer_id,
-        "document_types": settings.DOCUMENT_TYPES
-    }
-
-# ==================== TEST OCR ENDPOINT ====================
-@router.get("/test/ocr")
-async def test_ocr(
-    current_user: User = Depends(get_current_user)
-):
-    """Test if OCR is configured correctly"""
-    try:
-        # Check OCR availability
-        ocr_status = {
-            "paddle_available": hasattr(processor, 'paddle_ocr') and processor.paddle_ocr is not None,
-            "easyocr_available": hasattr(processor, 'easy_ocr') and processor.easy_ocr is not None,
-            "layout_available": processor.use_layout,
-            "current_engine": processor.ocr_engine,
-            "use_gpu": processor.use_gpu
-        }
-        
-        return {
-            "success": True,
-            "message": "OCR test endpoint",
-            "user": {
-                "id": current_user.id,
-                "farmer_id": current_user.farmer_id,
-                "name": current_user.full_name
-            },
-            "config": {
-                "ocr_engine": settings.OCR_ENGINE,
-                "document_types": settings.DOCUMENT_TYPES,
-                "max_file_size": settings.MAX_FILE_SIZE,
-                "allowed_extensions": list(settings.ALLOWED_EXTENSIONS),
-                "ocr_status": ocr_status
-            }
-        }
-    except Exception as e:
-        logger.error(f"❌ OCR test error: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
-# ==================== UTILITY ENDPOINTS ====================
-
-@router.get("/types")
-async def get_document_types():
-    """Get list of supported document types"""
-    return {
-        "success": True,
-        "document_types": settings.DOCUMENT_TYPES,
-        "document_table_map": settings.DOCUMENT_TABLE_MAP
-    }
-
-@router.get("/my-documents")
-async def get_my_documents(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """Get all documents uploaded by current user across all types"""
-    
-    logger.info(f"📋 Fetching all documents for user {current_user.farmer_id}")
-    
-    all_documents = []
-    
-    for doc_type, table_name in settings.DOCUMENT_TABLE_MAP.items():
-        try:
-            query = f"SELECT * FROM {table_name} WHERE farmer_id = :farmer_id ORDER BY created_at DESC"
-            result = db.execute(text(query), {'farmer_id': current_user.farmer_id}).fetchall()
-            
-            for row in result:
-                doc_dict = dict(row._mapping)
-                # Convert datetime objects to strings
-                for key, value in doc_dict.items():
-                    if hasattr(value, 'isoformat'):
-                        doc_dict[key] = value.isoformat()
-                doc_dict['document_type'] = doc_type
-                all_documents.append(doc_dict)
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Could not fetch from {table_name}: {str(e)}")
-            continue
-    
-    return {
-        "success": True,
-        "count": len(all_documents),
-        "documents": all_documents
+            "name": current_user.full_name
+        },
+        "tables": results
     }
