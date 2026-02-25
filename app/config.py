@@ -1,106 +1,104 @@
-# app/config.py - COMPLETE FIXED VERSION (NO GEMINI OCR)
+from pydantic_settings import BaseSettings
+from typing import List, Dict, Set
 import os
 from dotenv import load_dotenv
-from typing import List, Dict
 
 load_dotenv()
 
-class Settings:
-    PROJECT_NAME = "AgroScheme AI"
-    PROJECT_VERSION = "1.0.0"
+class Settings(BaseSettings):
+    # App Settings
+    APP_NAME: str = "AgroScheme API"
+    DEBUG: bool = False
+    API_V1_STR: str = "/api/v1"
     
-    # ✅ Supabase Configuration
-    SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL", "")
-    SUPABASE_KEY = os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY", "")
-    SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+    # Database
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "")
     
-    # ✅ Database URL (from Supabase)
-    DATABASE_URL = os.getenv("DATABASE_URL", "")
+    # Security
+    SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")
+    ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
-    # Fix PostgreSQL URL
-    if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    # Supabase Storage
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+    SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+    SUPABASE_BUCKET: str = "farmer-documents"
     
-    # ✅ CORS Configuration - EXACT origins only
-    ALLOWED_ORIGINS: List[str] = [
-        # Your Vercel frontend
-        "https://agroscheme-backend-2.vercel.app",
-        
-        # Your Render backend
-        "https://agroscheme-6.onrender.com",
-        
-        # Local development
-        "http://localhost:3000",
-        "http://localhost:8000",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:8000",
+    # File Upload Settings
+    MAX_FILE_SIZE: int = 10 * 1024 * 1024  # 10MB
+    ALLOWED_EXTENSIONS: Set = {'.pdf', '.jpg', '.jpeg', '.png', '.tiff', '.bmp'}
+    
+    # OCR Settings
+    OCR_ENGINE: str = "paddle"  # paddle, easyocr, tesseract
+    OCR_LANG: str = "en"  # English (can add 'hi' for Hindi)
+    OCR_USE_GPU: bool = False  # Set to True if you have GPU
+    OCR_BATCH_SIZE: int = 4
+    OCR_CONFIDENCE_THRESHOLD: float = 0.7
+    
+    # Layout Parser Settings
+    USE_LAYOUT_PARSER: bool = True
+    LAYOUT_MODEL: str = "lp://PubLayNet/faster_rcnn_r50_fpn_dcn"  # For document layout
+    
+    # Document Types
+    DOCUMENT_TYPES: List = [
+        "aadhaar",
+        "pan",
+        "land_record",
+        "bank_passbook",
+        "income_certificate",
+        "caste_certificate",
+        "domicile",
+        "crop_insurance",
+        "death_certificate"
     ]
     
-    # ✅ JWT Configuration
-    SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
-    ALGORITHM = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days
-    
-    # ✅ File Upload Configuration
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-    ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
-    UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
-    
-    # ==================== GEMINI AI (ONLY FOR ELIGIBILITY CHECKING) ====================
-    # ✅ Keep Gemini ONLY for eligibility checking (not for OCR)
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-    
-    # ==================== FREE OCR CONFIGURATION ====================
-    # ✅ OCR Engine Selection - Purely FREE!
-    OCR_ENGINE: str = os.getenv("OCR_ENGINE", "paddle")  # "paddle" or "easyocr"
-    OCR_USE_GPU: bool = os.getenv("OCR_USE_GPU", "false").lower() == "true"
-    OCR_CONFIDENCE_THRESHOLD: float = float(os.getenv("OCR_CONFIDENCE_THRESHOLD", "0.5"))
-    
-    # ✅ OCR Languages (Indian languages supported)
-    OCR_LANGUAGES: List[str] = [
-        "en",  # English
-        "hi",  # Hindi
-        "mr",  # Marathi
-        "ta",  # Tamil
-        "te",  # Telugu
-        "bn",  # Bengali
-        "gu",  # Gujarati
-        "kn",  # Kannada
-        "ml",  # Malayalam
-        "or",  # Odia
-        "pa",  # Punjabi
-        "ur"   # Urdu
-    ]
-    
-    # ✅ Document types supported
-    DOCUMENT_TYPES: List[str] = [
-        'aadhaar',
-        'pan',
-        'land_record',
-        'bank_passbook',
-        'income_certificate',
-        'caste_certificate',
-        'domicile',
-        'crop_insurance',
-        'death_certificate'
-    ]
-    
-    # ✅ Map document types to database tables
-    DOCUMENT_TABLE_MAP: dict = {
-        'aadhaar': 'aadhaar_documents',
-        'pan': 'pan_documents',
-        'land_record': 'land_records',
-        'bank_passbook': 'bank_documents',
-        'income_certificate': 'income_certificates',
-        'caste_certificate': 'caste_certificates',
-        'domicile': 'domicile_certificates',
-        'crop_insurance': 'crop_insurance_docs',
-        'death_certificate': 'death_certificates'
+    # Document to Table Mapping
+    DOCUMENT_TABLE_MAP: Dict = {
+        "aadhaar": "aadhaar_documents",
+        "pan": "pan_documents",
+        "land_record": "land_records",
+        "bank_passbook": "bank_documents",
+        "income_certificate": "income_certificates",
+        "caste_certificate": "caste_certificates",
+        "domicile": "domicile_certificates",
+        "crop_insurance": "crop_insurance_docs",
+        "death_certificate": "death_certificates"
     }
     
-    # ✅ Auto-apply settings
-    AUTO_APPLY_ENABLED: bool = True
-    AUTO_APPLY_CHECK_INTERVAL: int = 3600  # Check every hour (in seconds)
+    # Field mappings for each document type
+    DOCUMENT_FIELD_MAPPINGS: Dict = {
+        "aadhaar": {
+            "required": ["aadhaar_number", "full_name"],
+            "optional": ["date_of_birth", "gender", "address", "pincode", "father_name", "mobile_number", "email"],
+            "patterns": {
+                "aadhaar_number": r'\d{4}\s?\d{4}\s?\d{4}',
+                "pincode": r'\d{6}',
+                "mobile": r'\d{10}'
+            }
+        },
+        "pan": {
+            "required": ["pan_number", "full_name"],
+            "optional": ["father_name", "date_of_birth", "pan_type"],
+            "patterns": {
+                "pan_number": r'[A-Z]{5}[0-9]{4}[A-Z]{1}'
+            }
+        },
+        "land_record": {
+            "required": ["survey_number", "owner_name"],
+            "optional": ["land_area_acres", "land_area_hectares", "land_type", "co_owners", 
+                        "village_name", "taluka", "district", "state", "crop_pattern", "irrigation_source"]
+        },
+        "bank_passbook": {
+            "required": ["account_number", "ifsc_code", "account_holder_name"],
+            "optional": ["bank_name", "branch_name", "account_type", "micr_code"],
+            "patterns": {
+                "ifsc_code": r'[A-Z]{4}0[A-Z0-9]{6}',
+                "micr_code": r'\d{9}'
+            }
+        }
+    }
+    
+    class Config:
+        case_sensitive = True
 
 settings = Settings()
