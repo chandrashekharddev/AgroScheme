@@ -1,28 +1,20 @@
-# Install pip-tools
-pip install pip-tools
-
-# Create a requirements.in file with your top-level dependencies (without versions)
-echo "fastapi" > requirements.in
-echo "uvicorn[standard]" >> requirements.in
-echo "sqlalchemy" >> requirements.in
-echo "psycopg2-binary" >> requirements.in
-echo "pydantic" >> requirements.in
-echo "pydantic-settings" >> requirements.in
-echo "python-jose[cryptography]" >> requirements.in
-echo "passlib[bcrypt]" >> requirements.in
-echo "python-multipart" >> requirements.in
-echo "easyocr" >> requirements.in  # Use EasyOCR instead of Paddle
-echo "opencv-python-headless" >> requirements.in
-echo "pdf2image" >> requirements.in
-echo "pillow" >> requirements.in
-echo "numpy" >> requirements.in
-echo "torch" >> requirements.in
-echo "torchvision" >> requirements.in
-echo "supabase" >> requirements.in
-echo "python-dotenv" >> requirements.in
-echo "httpx" >> requirements.in
-
-# Compile to a full requirements.txt with all dependencies pinned
-pip-compile requirements.in
-
-# Use the generated requirements.txt for deployment
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+pydantic==2.10.6
+pydantic-settings==2.1.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+easyocr==1.7.1
+opencv-python-headless==4.9.0.80
+pdf2image==1.16.3
+pillow==10.1.0
+numpy==1.24.3
+torch==2.1.0
+torchvision==0.16.0
+supabase==2.3.3
+python-dotenv==1.0.0
+httpx==0.25.0
+aiofiles==23.2.1
