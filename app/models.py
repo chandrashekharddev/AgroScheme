@@ -1,4 +1,3 @@
-# app/models.py - COMPLETE FIXED VERSION
 from sqlalchemy import Column, Integer, String, Boolean, Float, DateTime, Text, ForeignKey, JSON, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -15,7 +14,10 @@ class DocumentType(str, enum.Enum):
     LAND_RECORD = "land_record"
     BANK_PASSBOOK = "bank_passbook"
     INCOME_CERTIFICATE = "income_certificate"
+    CASTE_CERTIFICATE = "caste_certificate"
     DOMICILE = "domicile"
+    CROP_INSURANCE = "crop_insurance"
+    DEATH_CERTIFICATE = "death_certificate"
     OTHER = "other"
 
 class ApplicationStatus(str, enum.Enum):
@@ -71,6 +73,11 @@ class Document(Base):
     file_name = Column(String(200))
     file_size = Column(Integer)
     extracted_data = Column(JSON)
+    extraction_id = Column(Integer, nullable=True)  # ID in the specific document table
+    extraction_table = Column(String(50), nullable=True)  # Table name where data is stored
+    extraction_status = Column(String(20), default="pending")  # pending, processing, completed, failed
+    extraction_error = Column(Text, nullable=True)
+    confidence_score = Column(Float, nullable=True)  # OCR confidence score
     verified = Column(Boolean, default=False)
     verification_date = Column(DateTime(timezone=True))
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -85,7 +92,6 @@ class GovernmentScheme(Base):
     scheme_name = Column(String(200), nullable=False)
     scheme_code = Column(String(50), unique=True, index=True)
     description = Column(Text)
-    # ✅ FIX: Use String, NOT Enum (match your database schema)
     scheme_type = Column(String(50), nullable=False, default="central")
     benefit_amount = Column(String(100))
     last_date = Column(DateTime(timezone=True))
@@ -97,7 +103,7 @@ class GovernmentScheme(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
-    # ✅ FIX: Add this relationship - THIS WAS MISSING!
+    # Relationships
     applications = relationship("Application", back_populates="scheme", cascade="all, delete-orphan")
 
 class Application(Base):
@@ -118,7 +124,7 @@ class Application(Base):
     
     # Relationships
     user = relationship("User", back_populates="applications")
-    scheme = relationship("GovernmentScheme", back_populates="applications")  # ✅ This requires GovernmentScheme to have 'applications' property
+    scheme = relationship("GovernmentScheme", back_populates="applications")
 
 class Notification(Base):
     __tablename__ = "notifications"
