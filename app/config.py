@@ -1,4 +1,4 @@
-# app/config.py - COMPLETE FIXED VERSION WITH OCR AND GEMINI
+# app/config.py - COMPLETE FIXED VERSION (NO GEMINI OCR)
 import os
 from dotenv import load_dotenv
 from typing import List, Dict
@@ -46,22 +46,13 @@ class Settings:
     ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".pdf"}
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
     
-    # ==================== GEMINI AI CONFIGURATION ====================
-    # ✅ Gemini AI Configuration (Keep for eligibility checking)
+    # ==================== GEMINI AI (ONLY FOR ELIGIBILITY CHECKING) ====================
+    # ✅ Keep Gemini ONLY for eligibility checking (not for OCR)
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     
-    # Gemini Free Tier Limits
-    GEMINI_FREE_TIER_RPD: int = 500  # Requests per day (free tier limit)
-    GEMINI_MAX_IMAGE_SIZE: int = 20 * 1024 * 1024  # 20MB (Gemini limit)
-    
-    # Supported Indian languages for document processing
-    GEMINI_SUPPORTED_LANGUAGES: List[str] = [
-        "en", "hi", "mr", "ta", "te", "kn", "ml", "gu", "pa", "bn", "or", "ur"
-    ]
-    
     # ==================== FREE OCR CONFIGURATION ====================
-    # ✅ OCR Engine Selection - NEW!
+    # ✅ OCR Engine Selection - Purely FREE!
     OCR_ENGINE: str = os.getenv("OCR_ENGINE", "paddle")  # "paddle" or "easyocr"
     OCR_USE_GPU: bool = os.getenv("OCR_USE_GPU", "false").lower() == "true"
     OCR_CONFIDENCE_THRESHOLD: float = float(os.getenv("OCR_CONFIDENCE_THRESHOLD", "0.5"))
@@ -81,20 +72,6 @@ class Settings:
         "pa",  # Punjabi
         "ur"   # Urdu
     ]
-    
-    # ✅ EasyOCR specific language mapping
-    EASYOCR_LANG_MAP: Dict[str, str] = {
-        'en': 'en', 'hi': 'hi', 'mr': 'mr', 'ta': 'ta',
-        'te': 'te', 'bn': 'bn', 'gu': 'gu', 'kn': 'kn',
-        'ml': 'ml', 'or': 'or', 'pa': 'pa', 'ur': 'ur'
-    }
-    
-    # ✅ PaddleOCR specific language mapping
-    PADDLE_LANG_MAP: Dict[str, str] = {
-        'en': 'en', 'hi': 'hi', 'mr': 'mr', 'ta': 'ta',
-        'te': 'te', 'bn': 'bn', 'gu': 'gu', 'kn': 'kn',
-        'ml': 'ml', 'or': 'or', 'pa': 'pa', 'ur': 'ur'
-    }
     
     # ✅ Document types supported
     DOCUMENT_TYPES: List[str] = [
