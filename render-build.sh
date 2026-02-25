@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# render-build.sh - Install system dependencies for OCR and force pre-built wheels
+# render-build.sh - Complete build script for Render deployment
 
 set -e  # exit on error
 
-echo "🚀 Installing system dependencies for scipy and OCR..."
+echo "🚀 Starting Render build process..."
+echo "📦 Installing system dependencies for OCR and scipy..."
 
 # Update package list
 apt-get update
 
-# Install build dependencies for scipy and OpenCV
+# Install ALL required system dependencies
 apt-get install -y \
     libgl1-mesa-glx \
     libglib2.0-0 \
@@ -16,20 +17,33 @@ apt-get install -y \
     libxext6 \
     libxrender-dev \
     libgomp1 \
+    wget \
+    unzip \
     gcc \
     g++ \
     gfortran \
     libopenblas-dev \
     liblapack-dev \
-    pkg-config
+    libatlas-base-dev \
+    pkg-config \
+    python3-dev
 
-# Upgrade pip and set options to prefer pre-built wheels
+echo "✅ System dependencies installed"
+
+# Upgrade pip and build tools
+echo "📦 Upgrading pip and build tools..."
 pip install --upgrade pip wheel setuptools
 
-# Force pip to use pre-built wheels by setting platform
-pip install --only-binary :all: scipy numpy
+# Pre-install numpy and scipy from wheels first
+echo "📦 Pre-installing numpy and scipy from wheels..."
+pip install --only-binary :all: numpy==1.24.3 scipy==1.10.1
 
-# Now install the rest of requirements
+# Install requirements
+echo "📦 Installing Python requirements..."
 pip install -r requirements.txt
+
+# Create uploads directory
+echo "📁 Creating uploads directory..."
+mkdir -p /opt/render/project/src/uploads
 
 echo "✅ Build complete!"
