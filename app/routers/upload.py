@@ -1,10 +1,10 @@
-# app/routers/upload.py - FIXED COLUMN NAMES TO MATCH DATABASE
+# app/routers/upload.py - COMPLETE FIXED VERSION
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.database import get_db
 from app.models import User, Document
-from app.ocr_processor import ocr_processor  # ✅ Using FREE OCR
+from app.ocr_processor import ocr_processor
 from app.supabase_storage import supabase_storage
 from app.utils.security import get_current_user
 from app.config import settings
@@ -27,6 +27,7 @@ async def upload_document(
 ):
     """Upload and process any government document using FREE OCR"""
     
+    logger.info(f"📤 ===== STARTING DOCUMENT UPLOAD =====")
     logger.info(f"📤 Upload request: user={current_user.farmer_id}, type={document_type}, file={file.filename}")
     
     # Validate document type using settings
@@ -93,7 +94,7 @@ async def upload_document(
             farmer_id=current_user.farmer_id
         )
         
-        logger.info(f"🔍 OCR result success: {result.get('success')}")
+        logger.info(f"🔍 OCR result: {result}")
         
         if result["success"]:
             # Insert into specific document table
@@ -119,8 +120,8 @@ async def upload_document(
                     logger.error(f"❌ Table {table_name} does not exist!")
                     document.extraction_status = "failed"
                     document.extraction_error = f"Table {table_name} does not exist"
-                    document.extracted_data = extracted_data  # ← FIXED: was extraction_data
-                    document.confidence_score = result.get("confidence", 0.7)
+                    document.extracted_data = extracted_data
+                    document.confidence_score = result.get("confidence", 0.0)
                     db.commit()
                     
                     return {
@@ -151,8 +152,8 @@ async def upload_document(
                     logger.warning(f"⚠️ No matching columns found in table {table_name}")
                     # Store raw text in the documents table instead
                     document.extraction_status = "partial"
-                    document.extracted_data = {"raw_text": result.get("raw_text", ""), **extracted_data}  # ← FIXED
-                    document.confidence_score = result.get("confidence", 0.7)
+                    document.extracted_data = extracted_data
+                    document.confidence_score = result.get("confidence", 0.0)
                     db.commit()
                     
                     return {
@@ -168,59 +169,74 @@ async def upload_document(
                 filtered_data = extracted_data  # Fallback to original
             
             # Build insert query dynamically
-            columns = ', '.join(filtered_data.keys())
-            placeholders = ', '.join([f':{k}' for k in filtered_data.keys()])
-            
-            insert_query = f"""
-                INSERT INTO {table_name} ({columns})
-                VALUES ({placeholders})
-                RETURNING id
-            """
-            
-            logger.info(f"🔍 Insert query: {insert_query}")
-            logger.info(f"🔍 Data: {filtered_data}")
-            
-            try:
-                result_proxy = db.execute(text(insert_query), filtered_data)
-                record_id = result_proxy.scalar()
-                db.flush()  # Ensure ID is available
-                logger.info(f"✅ Data inserted into {table_name}: ID={record_id}")
+            if filtered_data:
+                columns = ', '.join(filtered_data.keys())
+                placeholders = ', '.join([f':{k}' for k in filtered_data.keys()])
                 
-                # Update document with extraction info
-                document.extraction_id = record_id
-                document.extraction_table = table_name
-                document.extraction_status = "completed"
-                document.extracted_data = filtered_data  # ← FIXED: was extraction_data
-                document.confidence_score = result.get("confidence", 0.7)
+                insert_query = f"""
+                    INSERT INTO {table_name} ({columns})
+                    VALUES ({placeholders})
+                    RETURNING id
+                """
                 
+                logger.info(f"🔍 Insert query: {insert_query}")
+                logger.info(f"🔍 Data: {filtered_data}")
+                
+                try:
+                    result_proxy = db.execute(text(insert_query), filtered_data)
+                    record_id = result_proxy.scalar()
+                    db.flush()
+                    logger.info(f"✅ Data inserted into {table_name}: ID={record_id}")
+                    
+                    # Update document with extraction info
+                    document.extraction_id = record_id
+                    document.extraction_table = table_name
+                    document.extraction_status = "completed"
+                    document.extracted_data = filtered_data
+                    document.confidence_score = result.get("confidence", 0.7)
+                    
+                    db.commit()
+                    logger.info(f"✅ Database commit successful")
+                    
+                    return {
+                        "success": True,
+                        "message": f"{document_type.replace('_', ' ').title()} uploaded and processed successfully",
+                        "document_id": document.id,
+                        "extraction_id": record_id,
+                        "extracted_data": filtered_data,
+                        "confidence": result.get("confidence", 0.7)
+                    }
+                    
+                except Exception as db_error:
+                    logger.error(f"❌ Database insert error: {str(db_error)}")
+                    logger.error(traceback.format_exc())
+                    db.rollback()
+                    
+                    document.extraction_status = "failed"
+                    document.extraction_error = str(db_error)
+                    document.extracted_data = extracted_data
+                    document.confidence_score = result.get("confidence", 0.0)
+                    db.commit()
+                    
+                    return {
+                        "success": True,
+                        "message": "Document uploaded but database insertion failed",
+                        "document_id": document.id,
+                        "error": str(db_error),
+                        "extracted_data": extracted_data
+                    }
+            else:
+                # No data to insert into specific table
+                logger.warning("⚠️ No data to insert into specific table")
+                document.extraction_status = "partial"
+                document.extracted_data = extracted_data
+                document.confidence_score = result.get("confidence", 0.0)
                 db.commit()
-                logger.info(f"✅ Database commit successful")
                 
                 return {
                     "success": True,
-                    "message": f"{document_type.replace('_', ' ').title()} uploaded and processed successfully",
+                    "message": "Document uploaded but no data extracted",
                     "document_id": document.id,
-                    "extraction_id": record_id,
-                    "extracted_data": filtered_data,
-                    "confidence": result.get("confidence", 0.7)
-                }
-                
-            except Exception as db_error:
-                logger.error(f"❌ Database insert error: {str(db_error)}")
-                logger.error(traceback.format_exc())
-                db.rollback()
-                
-                document.extraction_status = "failed"
-                document.extraction_error = str(db_error)
-                document.extracted_data = {"raw_text": result.get("raw_text", ""), **extracted_data}  # ← FIXED
-                document.confidence_score = result.get("confidence", 0.7)
-                db.commit()
-                
-                return {
-                    "success": True,
-                    "message": "Document uploaded but database insertion failed",
-                    "document_id": document.id,
-                    "error": str(db_error),
                     "extracted_data": extracted_data
                 }
         else:
@@ -250,6 +266,41 @@ async def upload_document(
             pass
             
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+@router.post("/test-ocr-direct")
+async def test_ocr_direct(
+    file: UploadFile = File(...),
+    document_type: str = Form(...),
+    current_user: User = Depends(get_current_user)
+):
+    """Test OCR directly without database insertion"""
+    
+    logger.info(f"🧪 TEST OCR: Processing {document_type} document")
+    
+    try:
+        file_bytes = await file.read()
+        
+        # Process with OCR
+        result = await ocr_processor.process_document(
+            file_bytes=file_bytes,
+            file_name=file.filename,
+            document_type=document_type,
+            farmer_id=current_user.farmer_id
+        )
+        
+        return {
+            "success": result.get("success"),
+            "extracted_data": result.get("extracted_data"),
+            "raw_text": result.get("raw_text"),
+            "confidence": result.get("confidence"),
+            "error": result.get("error")
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 @router.get("/{document_type}/{farmer_id}")
 async def get_farmer_documents(
@@ -397,7 +448,7 @@ async def get_document_status(
                 logger.error(f"❌ Failed to fetch extracted data: {str(e)}")
                 status_info["extracted_data_error"] = str(e)
         
-        # ✅ FIXED: Use document.extracted_data (with 'd'), not document.extraction_data
+        # If extraction data is stored directly in document
         if document.extracted_data and not status_info.get("extracted_data"):
             status_info["extracted_data"] = document.extracted_data
         
@@ -416,6 +467,7 @@ async def get_document_status(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to get document status: {str(e)}")
+
 @router.get("/types")
 async def get_document_types():
     """Get list of supported document types"""
