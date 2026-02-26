@@ -5,7 +5,7 @@ sqlalchemy==2.0.23
 python-multipart==0.0.6
 pydantic==2.5.0
 anyio>=3.7.1,<4.0.0
-email-validator==2.1.0  # ← ADD THIS LINE
+email-validator==2.1.0
 
 # Database
 psycopg2-binary==2.9.9
@@ -15,19 +15,16 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0
 
-# Supabase (Keep ranges as they worked before)
+# Supabase
 supabase>=1.2.0
 postgrest>=0.10.0
-httpx>=0.25.0  # This range works with your setup
+httpx>=0.25.0
 
 # Document Processing & OCR
 pdf2image>=1.16.3
 opencv-python-headless>=4.8.1.78
-Pillow==10.3.0  # Specific version you had
-easyocr==1.7.1
-
-# AI (Keep as is)
-google-generativeai>=0.8.0
+Pillow==10.3.0
+easyocr==1.7.1  # ← ADD THIS LINE
 
 # Utilities
 python-magic>=0.4.27
