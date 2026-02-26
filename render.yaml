@@ -4,9 +4,18 @@ services:
     env: python
     pythonVersion: "3.11.0"
     buildCommand: |
+      apt-get update
+      apt-get install -y libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev
       pip install --upgrade pip
-      pip install -r requirements.txt
-    startCommand: python start_server.py
+      pip install --no-cache-dir -r requirements.txt
+      mkdir -p uploads
+    startCommand: python render_start.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: OCR_ENGINE
+        value: easyocr
+      - key: OCR_USE_GPU
+        value: false
+      - key: PIP_NO_CACHE_DIR
+        value: "1"
