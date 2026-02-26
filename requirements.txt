@@ -24,6 +24,7 @@ httpx>=0.25.0  # This range works with your setup
 pdf2image>=1.16.3
 opencv-python-headless>=4.8.1.78
 Pillow==10.3.0  # Specific version you had
+easyocr==1.7.1
 
 # AI (Keep as is)
 google-generativeai>=0.8.0
