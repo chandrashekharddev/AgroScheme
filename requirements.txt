@@ -1,36 +1,41 @@
-# Core
+# Core - Pin exact versions that work together
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 pydantic==2.5.0
 pydantic-settings==2.1.0
+starlette==0.27.0  # Pinned to match FastAPI 0.104.1
 
 # Database
 sqlalchemy==2.0.23
 psycopg2-binary==2.9.9
 alembic==1.12.1
 
-# OCR - Using EasyOCR only (lighter, fewer dependencies)
+# OCR - Minimal for EasyOCR (NO scipy, NO torch, NO cuda packages)
 easyocr==1.7.1
-pdf2image==1.16.3
-opencv-python-headless==4.8.1.78
 pillow==10.1.0
+opencv-python-headless==4.8.1.78
 numpy==1.24.3
-scipy==1.10.1  # Pinned version that works well
 
-# Image processing
-scikit-image==0.22.0
+# PDF processing
+pdf2image==1.16.3
 
 # Storage
 supabase==2.3.3
+storage3==0.6.1  # Pinned
+realtime==1.0.0  # Pinned
+websockets==12.0  # Pinned
 
 # Auth
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-dotenv==1.0.0
+cryptography==41.0.7  # Pinned
 
 # Utilities
 requests==2.31.0
 pytz==2023.3
 python-dateutil==2.8.2
 regex==2023.10.3
+pyyaml==6.0.1  # Pinned
+six==1.16.0  # Pinned
