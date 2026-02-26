@@ -17,5 +17,3 @@ services:
         value: easyocr
       - key: OCR_USE_GPU
         value: false
-      - key: PIP_NO_CACHE_DIR
-        value: "1"
