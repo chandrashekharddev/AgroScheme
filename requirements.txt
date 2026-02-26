@@ -25,7 +25,7 @@ realtime==1.0.0
 gotrue==2.4.1  # ← CHANGED FROM 2.3.0
 postgrest==0.13.2
 supafunc==0.3.3
-httpx==0.25.2
+httpx==0.24.1
 websockets==10.4
 
 # Auth
