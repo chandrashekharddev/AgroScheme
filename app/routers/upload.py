@@ -1,4 +1,4 @@
-# app/routers/upload.py - COMPLETE FILE WITH FREE OCR (NO GEMINI)
+# app/routers/upload.py - FIXED COLUMN NAMES TO MATCH DATABASE
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -119,7 +119,7 @@ async def upload_document(
                     logger.error(f"❌ Table {table_name} does not exist!")
                     document.extraction_status = "failed"
                     document.extraction_error = f"Table {table_name} does not exist"
-                    document.extraction_data = extracted_data
+                    document.extracted_data = extracted_data  # ← FIXED: was extraction_data
                     document.confidence_score = result.get("confidence", 0.7)
                     db.commit()
                     
@@ -151,7 +151,7 @@ async def upload_document(
                     logger.warning(f"⚠️ No matching columns found in table {table_name}")
                     # Store raw text in the documents table instead
                     document.extraction_status = "partial"
-                    document.extraction_data = {"raw_text": result.get("raw_text", ""), **extracted_data}
+                    document.extracted_data = {"raw_text": result.get("raw_text", ""), **extracted_data}  # ← FIXED
                     document.confidence_score = result.get("confidence", 0.7)
                     db.commit()
                     
@@ -190,7 +190,7 @@ async def upload_document(
                 document.extraction_id = record_id
                 document.extraction_table = table_name
                 document.extraction_status = "completed"
-                document.extraction_data = filtered_data
+                document.extracted_data = filtered_data  # ← FIXED: was extraction_data
                 document.confidence_score = result.get("confidence", 0.7)
                 
                 db.commit()
@@ -212,7 +212,7 @@ async def upload_document(
                 
                 document.extraction_status = "failed"
                 document.extraction_error = str(db_error)
-                document.extraction_data = {"raw_text": result.get("raw_text", ""), **extracted_data}
+                document.extracted_data = {"raw_text": result.get("raw_text", ""), **extracted_data}  # ← FIXED
                 document.confidence_score = result.get("confidence", 0.7)
                 db.commit()
                 
@@ -397,9 +397,9 @@ async def get_document_status(
                 logger.error(f"❌ Failed to fetch extracted data: {str(e)}")
                 status_info["extracted_data_error"] = str(e)
         
-        # If extraction data is stored directly in document (for partial/error cases)
-        if document.extraction_data and not status_info.get("extracted_data"):
-            status_info["extracted_data"] = document.extraction_data
+        # ✅ FIXED: Use document.extracted_data (with 'd'), not document.extraction_data
+        if document.extracted_data and not status_info.get("extracted_data"):
+            status_info["extracted_data"] = document.extracted_data
         
         if document.extraction_error:
             status_info["error"] = document.extraction_error
@@ -416,7 +416,6 @@ async def get_document_status(
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to get document status: {str(e)}")
-
 @router.get("/types")
 async def get_document_types():
     """Get list of supported document types"""
