@@ -1,10 +1,8 @@
-# app/eligibility_checker.py
-
+# app/eligibility_checker.py - UPDATED (No Gemini dependency)
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.models import User, Application, GovernmentScheme, Notification
 from app.config import settings
-from app.gemini_processor import GeminiDocumentProcessor
 from datetime import datetime
 import logging
 import json
@@ -16,8 +14,8 @@ from typing import List, Dict, Any, Optional, Tuple
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize Gemini processor
-processor = GeminiDocumentProcessor()
+# REMOVED: from app.gemini_processor import GeminiDocumentProcessor
+# REMOVED: processor = GeminiDocumentProcessor()
 
 class EligibilityChecker:
     """Check user eligibility for government schemes and auto-apply"""
@@ -47,10 +45,6 @@ class EligibilityChecker:
                 "reason": "User not found",
                 "match_percentage": 0
             }
-        
-        # Check if auto-apply is enabled (for auto-apply scenarios)
-        # Note: This can be bypassed for manual checks
-        auto_apply_check = False  # This will be set by caller
         
         # Get scheme
         scheme = self.db.query(GovernmentScheme).filter(GovernmentScheme.id == scheme_id).first()
@@ -83,11 +77,8 @@ class EligibilityChecker:
         if required_docs:
             doc_coverage = (len(present_docs) / len(required_docs)) * 100
         
-        # Use Gemini to check eligibility based on documents and criteria
-        eligibility_result = await self._check_eligibility_with_gemini(
-            user_docs, 
-            scheme.eligibility_criteria or {}
-        )
+        # Use rule-based eligibility checking (no Gemini)
+        eligibility_result = self._check_eligibility_rules(user_docs, scheme.eligibility_criteria or {})
         
         # Combine results
         final_result = {
@@ -112,6 +103,143 @@ class EligibilityChecker:
         
         logger.info(f"✅ Eligibility check complete: Eligible={final_result['eligible']}, Match={final_result['match_percentage']}%")
         return final_result
+    
+    def _check_eligibility_rules(self, user_docs: Dict, criteria: Dict) -> Dict[str, Any]:
+        """
+        Check eligibility based on rules (no Gemini)
+        
+        Args:
+            user_docs: User's documents with extracted data
+            criteria: Scheme eligibility criteria
+            
+        Returns:
+            Dictionary with eligibility results
+        """
+        
+        matched = []
+        missing = []
+        reasons = []
+        
+        # Extract user data from documents
+        user_data = self._extract_user_data_from_docs(user_docs)
+        
+        # Check each criterion
+        for key, value in criteria.items():
+            if key == "age_min" and "age" in user_data:
+                if user_data["age"] >= value:
+                    matched.append(f"Age >= {value}")
+                else:
+                    missing.append(f"Age < {value}")
+                    reasons.append(f"Age {user_data['age']} is less than minimum {value}")
+            
+            elif key == "age_max" and "age" in user_data:
+                if user_data["age"] <= value:
+                    matched.append(f"Age <= {value}")
+                else:
+                    missing.append(f"Age > {value}")
+                    reasons.append(f"Age {user_data['age']} is greater than maximum {value}")
+            
+            elif key == "annual_income_max" and "annual_income" in user_data:
+                if user_data["annual_income"] <= value:
+                    matched.append(f"Income <= ₹{value}")
+                else:
+                    missing.append(f"Income > ₹{value}")
+                    reasons.append(f"Annual income ₹{user_data['annual_income']} exceeds maximum ₹{value}")
+            
+            elif key == "land_holding_min" and "land_area" in user_data:
+                if user_data["land_area"] >= value:
+                    matched.append(f"Land >= {value} acres")
+                else:
+                    missing.append(f"Land < {value} acres")
+                    reasons.append(f"Land holding {user_data['land_area']} acres is less than minimum {value} acres")
+            
+            elif key == "caste_allowed" and "caste" in user_data:
+                if user_data["caste"] in value:
+                    matched.append(f"Caste {user_data['caste']} is allowed")
+                else:
+                    missing.append(f"Caste {user_data['caste']} not in allowed list")
+                    reasons.append(f"Caste {user_data['caste']} is not eligible")
+            
+            elif key == "gender" and "gender" in user_data:
+                if value == "all" or user_data["gender"].lower() == value.lower():
+                    matched.append(f"Gender {user_data['gender']} is eligible")
+                else:
+                    missing.append(f"Gender {user_data['gender']} not eligible")
+                    reasons.append(f"Gender {user_data['gender']} is not eligible (requires {value})")
+        
+        # Calculate match percentage
+        total_criteria = len(criteria)
+        if total_criteria == 0:
+            match_percentage = 100
+        else:
+            match_percentage = (len(matched) / total_criteria) * 100
+        
+        # Determine eligibility
+        eligible = len(missing) == 0
+        
+        return {
+            "eligible": eligible,
+            "match_percentage": match_percentage,
+            "reasons": reasons,
+            "matched_criteria": matched,
+            "missing_criteria": missing,
+            "confidence": "high"
+        }
+    
+    def _extract_user_data_from_docs(self, user_docs: Dict) -> Dict[str, Any]:
+        """Extract user information from documents for eligibility checking"""
+        
+        user_data = {}
+        
+        # Extract from Aadhaar
+        if "aadhaar" in user_docs:
+            aadhaar = user_docs["aadhaar"]
+            if "date_of_birth" in aadhaar:
+                # Calculate age from DOB
+                try:
+                    from datetime import date
+                    dob = datetime.fromisoformat(aadhaar["date_of_birth"].replace('Z', '+00:00'))
+                    today = date.today()
+                    age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                    user_data["age"] = age
+                except:
+                    pass
+            
+            if "gender" in aadhaar:
+                user_data["gender"] = aadhaar["gender"]
+        
+        # Extract from income certificate
+        if "income_certificate" in user_docs:
+            income = user_docs["income_certificate"]
+            if "annual_income" in income:
+                try:
+                    user_data["annual_income"] = float(income["annual_income"])
+                except:
+                    pass
+        
+        # Extract from land records
+        if "land_record" in user_docs:
+            land = user_docs["land_record"]
+            if "land_area_acres" in land:
+                try:
+                    user_data["land_area"] = float(land["land_area_acres"])
+                except:
+                    pass
+            elif "land_area_hectares" in land:
+                try:
+                    # Convert hectares to acres (1 hectare = 2.47 acres)
+                    user_data["land_area"] = float(land["land_area_hectares"]) * 2.47
+                except:
+                    pass
+        
+        # Extract from caste certificate
+        if "caste_certificate" in user_docs:
+            caste = user_docs["caste_certificate"]
+            if "caste_category" in caste:
+                user_data["caste"] = caste["caste_category"]
+        
+        logger.info(f"📊 Extracted user data for eligibility: {user_data}")
+        return user_data
     
     async def check_all_users_for_new_scheme(self, scheme_id: int) -> List[Dict[str, Any]]:
         """
@@ -291,88 +419,15 @@ class EligibilityChecker:
         
         return len(missing) == 0, missing, present
     
-    async def _check_eligibility_with_gemini(self, user_docs: Dict, criteria: Dict) -> Dict[str, Any]:
-        """Use Gemini to check eligibility based on documents and criteria"""
-        
-        try:
-            # Prepare prompt for Gemini
-            prompt = f"""
-            You are an expert at determining farmer eligibility for Indian government agricultural schemes.
-            
-            USER DOCUMENTS (extracted data):
-            {json.dumps(user_docs, indent=2, default=str)}
-            
-            SCHEME ELIGIBILITY CRITERIA:
-            {json.dumps(criteria, indent=2)}
-            
-            Based on the documents and criteria, determine if this farmer is eligible.
-            
-            Return a JSON object with the following structure:
-            {{
-                "eligible": true/false,
-                "match_percentage": number between 0-100,
-                "reasons": ["reason1", "reason2"],
-                "matched_criteria": ["criterion1", "criterion2"],
-                "missing_criteria": ["criterion1", "criterion2"],
-                "confidence": "high/medium/low"
-            }}
-            
-            Only return the JSON, no other text.
-            """
-            
-            # Call Gemini
-            response = processor.model.generate_content(prompt)
-            
-            # Parse response
-            try:
-                # Clean response text (remove markdown if present)
-                text = response.text
-                if '```json' in text:
-                    text = text.split('```json')[1].split('```')[0]
-                elif '```' in text:
-                    text = text.split('```')[1].split('```')[0]
-                
-                result = json.loads(text.strip())
-                logger.info(f"Gemini eligibility result: {result}")
-                return result
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse Gemini response as JSON: {e}")
-                logger.debug(f"Raw response: {response.text}")
-                
-                # Fallback to basic eligibility
-                return {
-                    "eligible": True,
-                    "match_percentage": 70,
-                    "reasons": ["Based on document analysis (fallback)"],
-                    "matched_criteria": [],
-                    "missing_criteria": [],
-                    "confidence": "medium"
-                }
-                
-        except Exception as e:
-            logger.error(f"Gemini eligibility check failed: {str(e)}")
-            # Conservative fallback
-            return {
-                "eligible": False,
-                "match_percentage": 0,
-                "reasons": [f"Eligibility check failed: {str(e)}"],
-                "matched_criteria": [],
-                "missing_criteria": [],
-                "confidence": "low"
-            }
-    
     async def _create_auto_application(self, user: User, scheme: GovernmentScheme, eligibility: Dict) -> Application:
         """Create an auto-application for a user with guaranteed unique ID"""
         
         # Generate a truly unique application ID using timestamp + UUID
-        # This ensures no duplicates even under high concurrency
         year = datetime.now().year
-        timestamp = datetime.now().strftime("%m%d%H%M%S%f")  # Microsecond precision (16 chars)
-        unique_id = str(uuid.uuid4()).replace('-', '')[:8]  # First 8 chars of UUID without hyphens
+        timestamp = datetime.now().strftime("%m%d%H%M%S%f")
+        unique_id = str(uuid.uuid4()).replace('-', '')[:8]
         application_id = f"APP{year}{timestamp}{unique_id}"
         
-        # Log the generated ID for debugging
         logger.info(f"Generated application ID: {application_id}")
         
         # Prepare application data
@@ -388,7 +443,6 @@ class EligibilityChecker:
         applied_amount = 0
         if scheme.benefit_amount:
             try:
-                # Try to convert to float, remove any non-numeric characters
                 amount_str = ''.join(c for c in scheme.benefit_amount if c.isdigit() or c == '.')
                 applied_amount = float(amount_str) if amount_str else 0
             except:
@@ -405,7 +459,7 @@ class EligibilityChecker:
             applied_at=datetime.now()
         )
         
-        # Add retry logic for absolute safety (though extremely unlikely with UUID approach)
+        # Add retry logic
         max_retries = 2
         for attempt in range(max_retries):
             try:
@@ -418,22 +472,17 @@ class EligibilityChecker:
             except Exception as e:
                 self.db.rollback()
                 
-                # Check if it's a duplicate key error (just in case)
                 if "duplicate key" in str(e).lower() and attempt < max_retries - 1:
-                    logger.warning(f"Duplicate application ID {application_id}, retrying... (attempt {attempt + 1})")
-                    
-                    # Generate a new ID with additional randomness
+                    logger.warning(f"Duplicate application ID {application_id}, retrying...")
                     year = datetime.now().year
                     timestamp = datetime.now().strftime("%m%d%H%M%S%f")
-                    unique_id = str(uuid.uuid4()).replace('-', '')[:12]  # Longer UUID fragment
+                    unique_id = str(uuid.uuid4()).replace('-', '')[:12]
                     application_id = f"APP{year}{timestamp}{unique_id}"
                     application.application_id = application_id
                 else:
-                    # Re-raise if it's not a duplicate key error or we're out of retries
                     logger.error(f"Failed to create application: {str(e)}")
                     raise e
         
-        # If we get here, all retries failed
         raise Exception(f"Failed to create application after {max_retries} attempts")
     
     async def _create_notification(self, user_id: int, title: str, message: str):
