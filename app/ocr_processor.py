@@ -1,4 +1,4 @@
-# app/ocr_processor.py - Using EasyOCR only (lighter for Render)
+# app/ocr_processor.py - COMPLETE FIXED VERSION WITH DEBUGGING
 import os
 import re
 import json
@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
 import cv2
 from pdf2image import convert_from_bytes
+import traceback
 
 # OCR Libraries
 try:
@@ -32,7 +33,7 @@ class OCRDocumentProcessor:
     def __init__(self):
         """Initialize EasyOCR processor"""
         self.languages = ['en', 'hi', 'mr', 'ta', 'te', 'bn']
-        self.confidence_threshold = 0.5
+        self.confidence_threshold = 0.3  # Lowered threshold
         
         logger.info(f"🚀 Initializing EasyOCR processor...")
         logger.info(f"📚 Languages: {self.languages}")
@@ -45,6 +46,8 @@ class OCRDocumentProcessor:
         
         if not self.reader:
             logger.error("❌ OCR engine could not be initialized!")
+        else:
+            logger.info("✅ OCR engine initialized successfully")
     
     def _initialize_reader(self):
         """Initialize EasyOCR"""
@@ -58,15 +61,19 @@ class OCRDocumentProcessor:
             # Map language codes for EasyOCR
             easyocr_langs = ['en', 'hi', 'mr', 'ta', 'te', 'bn']
             
-            return easyocr.Reader(
+            reader = easyocr.Reader(
                 easyocr_langs,
                 gpu=False,  # CPU mode for Render
                 model_storage_directory='~/.easyocr/model',
                 download_enabled=True,
                 verbose=False
             )
+            logger.info("✅ EasyOCR initialized successfully")
+            return reader
+            
         except Exception as e:
             logger.error(f"❌ EasyOCR initialization failed: {e}")
+            logger.error(traceback.format_exc())
             return None
     
     async def process_document(self,
@@ -87,21 +94,31 @@ class OCRDocumentProcessor:
             Dictionary with extracted data
         """
         try:
+            logger.info(f"🔍 ===== STARTING OCR PROCESSING =====")
             logger.info(f"🔍 Processing {document_type} document for farmer {farmer_id}")
+            logger.info(f"📄 File name: {file_name}")
+            logger.info(f"📦 File size: {len(file_bytes)} bytes")
             
             if not self.reader:
-                return {
-                    "success": False,
-                    "error": "OCR engine not initialized. Please check your installation."
-                }
+                logger.error("❌ OCR reader not initialized!")
+                # Try to re-initialize
+                self.reader = self._initialize_reader()
+                if not self.reader:
+                    return {
+                        "success": False,
+                        "error": "OCR engine not initialized. Please check EasyOCR installation."
+                    }
             
             # Convert to image if PDF
+            logger.info("📸 Converting to images...")
             images = await self._convert_to_images(file_bytes, file_name)
+            logger.info(f"📸 Got {len(images)} images")
             
             if not images:
+                logger.error("❌ No images could be extracted from document")
                 return {
                     "success": False,
-                    "error": "Could not convert document to image"
+                    "error": "Could not convert document to image. Unsupported format or corrupted file."
                 }
             
             # Process each page (max 3 pages)
@@ -111,27 +128,55 @@ class OCRDocumentProcessor:
             for i, image in enumerate(images[:3]):
                 logger.info(f"📄 Processing page {i+1}/{min(len(images), 3)}")
                 
-                # Preprocess image for better OCR
-                processed_image = self._preprocess_image(image)
-                
-                # Perform OCR with EasyOCR
-                result = self.reader.readtext(
-                    np.array(processed_image),
-                    paragraph=True,
-                    width_ths=0.7,
-                    height_ths=0.7
-                )
-                
-                page_text, page_boxes = self._parse_easyocr_result(result)
-                all_text.extend(page_text)
-                all_boxes.extend(page_boxes)
+                try:
+                    # Preprocess image for better OCR
+                    processed_image = self._preprocess_image(image)
+                    
+                    # Perform OCR with EasyOCR
+                    logger.info(f"🔍 Running OCR on page {i+1}...")
+                    result = self.reader.readtext(
+                        np.array(processed_image),
+                        paragraph=True,
+                        width_ths=0.5,
+                        height_ths=0.5,
+                        decoder='greedy'  # Faster decoding
+                    )
+                    logger.info(f"✅ Page {i+1} OCR complete, got {len(result)} text blocks")
+                    
+                    page_text, page_boxes = self._parse_easyocr_result(result)
+                    logger.info(f"📝 Page {i+1} extracted {len(page_text)} text segments")
+                    
+                    all_text.extend(page_text)
+                    all_boxes.extend(page_boxes)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Error processing page {i+1}: {str(e)}")
+                    logger.error(traceback.format_exc())
+                    continue
             
             # Combine all text
             full_text = " ".join(all_text)
-            logger.info(f"📝 Extracted text length: {len(full_text)} chars")
+            logger.info(f"📝 Total extracted text length: {len(full_text)} characters")
+            
+            if not full_text.strip():
+                logger.warning("⚠️ No text extracted from document!")
+                # Return raw text empty but don't fail completely
+                return {
+                    "success": True,  # Still return success to avoid breaking flow
+                    "table_name": self.doc_table_map.get(document_type, 'documents'),
+                    "extracted_data": {"raw_text": ""},
+                    "raw_text": "",
+                    "confidence": 0.0,
+                    "warning": "No text could be extracted"
+                }
+            
+            # Log first 200 chars of extracted text for debugging
+            logger.info(f"📝 First 200 chars: {full_text[:200]}")
             
             # Extract structured data based on document type
+            logger.info(f"🔍 Extracting structured data for {document_type}...")
             extracted_data = self._extract_structured_data(full_text, document_type)
+            logger.info(f"📊 Extracted fields: {list(extracted_data.keys())}")
             
             # Add metadata
             extracted_data['farmer_id'] = farmer_id
@@ -141,22 +186,19 @@ class OCRDocumentProcessor:
             
             # Validate and clean data
             cleaned_data = self._validate_and_clean(extracted_data, document_type)
-            
-            logger.info(f"✅ Successfully extracted data from {document_type}")
-            logger.info(f"📊 Extracted fields: {list(cleaned_data.keys())}")
+            logger.info(f"✅ Successfully extracted {len(cleaned_data)} fields from {document_type}")
             
             return {
                 "success": True,
                 "table_name": self.doc_table_map.get(document_type, 'documents'),
                 "extracted_data": cleaned_data,
-                "raw_text": full_text[:500],
+                "raw_text": full_text[:1000],  # Store more raw text for debugging
                 "confidence": extracted_data.get('confidence', 0.7)
             }
             
         except Exception as e:
             logger.error(f"❌ OCR processing error for {document_type}: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            logger.error(traceback.format_exc())
             return {
                 "success": False,
                 "error": str(e)
@@ -168,24 +210,27 @@ class OCRDocumentProcessor:
         
         try:
             if file_name.lower().endswith('.pdf'):
+                logger.info("📄 Detected PDF file, converting to images...")
                 # Convert PDF to images
                 images = convert_from_bytes(
                     file_bytes,
                     first_page=1,
                     last_page=3,
                     fmt='jpeg',
-                    dpi=200
+                    dpi=150  # Lower DPI for faster processing
                 )
                 logger.info(f"✅ Converted PDF to {len(images)} images")
             else:
                 # Single image
+                logger.info("🖼️ Processing as single image...")
                 image = Image.open(io.BytesIO(file_bytes))
                 if image.mode != 'RGB':
                     image = image.convert('RGB')
                 images.append(image)
-                logger.info("✅ Loaded single image")
+                logger.info(f"✅ Loaded single image: size {image.size}, mode {image.mode}")
         except Exception as e:
             logger.error(f"❌ Image conversion error: {str(e)}")
+            logger.error(traceback.format_exc())
         
         return images
     
@@ -257,26 +302,33 @@ class OCRDocumentProcessor:
     def _extract_structured_data(self, text: str, document_type: str) -> Dict[str, Any]:
         """Extract structured data based on document type using regex patterns"""
         
+        # Always include raw text for debugging
+        result = {"_raw_text_sample": text[:200]}
+        
         if document_type == 'aadhaar':
-            return self._extract_aadhaar(text)
+            extracted = self._extract_aadhaar(text)
         elif document_type == 'pan':
-            return self._extract_pan(text)
+            extracted = self._extract_pan(text)
         elif document_type == 'land_record':
-            return self._extract_land_record(text)
+            extracted = self._extract_land_record(text)
         elif document_type == 'bank_passbook':
-            return self._extract_bank_details(text)
+            extracted = self._extract_bank_details(text)
         elif document_type == 'income_certificate':
-            return self._extract_income_certificate(text)
+            extracted = self._extract_income_certificate(text)
         elif document_type == 'caste_certificate':
-            return self._extract_caste_certificate(text)
+            extracted = self._extract_caste_certificate(text)
         elif document_type == 'domicile':
-            return self._extract_domicile(text)
+            extracted = self._extract_domicile(text)
         elif document_type == 'crop_insurance':
-            return self._extract_crop_insurance(text)
+            extracted = self._extract_crop_insurance(text)
         elif document_type == 'death_certificate':
-            return self._extract_death_certificate(text)
+            extracted = self._extract_death_certificate(text)
         else:
-            return {"raw_text": text[:500]}
+            extracted = {"raw_text": text[:500]}
+        
+        # Merge with result
+        result.update(extracted)
+        return result
     
     def _extract_aadhaar(self, text: str) -> Dict[str, Any]:
         """Extract Aadhaar card details using regex"""
@@ -287,6 +339,7 @@ class OCRDocumentProcessor:
         match = re.search(aadhaar_pattern, text)
         if match:
             data['aadhaar_number'] = re.sub(r'\D', '', match.group(1))
+            logger.info(f"✅ Found Aadhaar number: {data['aadhaar_number']}")
         
         # Name
         name_patterns = [
@@ -297,6 +350,7 @@ class OCRDocumentProcessor:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 data['full_name'] = match.group(1).strip()
+                logger.info(f"✅ Found name: {data['full_name']}")
                 break
         
         # Date of Birth
@@ -308,13 +362,16 @@ class OCRDocumentProcessor:
             match = re.search(pattern, text)
             if match:
                 data['date_of_birth'] = self._parse_date(match.group(1))
+                logger.info(f"✅ Found DOB: {data['date_of_birth']}")
                 break
         
         # Gender
         if re.search(r'\bMale\b|\bपुरुष\b', text, re.I):
             data['gender'] = 'Male'
+            logger.info("✅ Found gender: Male")
         elif re.search(r'\bFemale\b|\bमहिला\b', text, re.I):
             data['gender'] = 'Female'
+            logger.info("✅ Found gender: Female")
         
         return data
     
@@ -327,6 +384,7 @@ class OCRDocumentProcessor:
         match = re.search(pan_pattern, text, re.I)
         if match:
             data['pan_number'] = match.group(1).upper()
+            logger.info(f"✅ Found PAN: {data['pan_number']}")
         
         # Name
         name_patterns = [
@@ -337,6 +395,7 @@ class OCRDocumentProcessor:
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 data['full_name'] = match.group(1).strip()
+                logger.info(f"✅ Found name: {data['full_name']}")
                 break
         
         # Father's Name
@@ -344,6 +403,7 @@ class OCRDocumentProcessor:
         match = re.search(father_pattern, text, re.I)
         if match:
             data['father_name'] = match.group(1).strip()
+            logger.info(f"✅ Found father's name: {data['father_name']}")
         
         return data
     
@@ -360,6 +420,7 @@ class OCRDocumentProcessor:
             match = re.search(pattern, text)
             if match:
                 data['survey_number'] = match.group(1)
+                logger.info(f"✅ Found survey number: {data['survey_number']}")
                 break
         
         # Land area in acres/hectares
@@ -372,8 +433,10 @@ class OCRDocumentProcessor:
             if match:
                 if 'एकर' in pattern or 'acre' in pattern:
                     data['land_area_acres'] = float(match.group(1))
+                    logger.info(f"✅ Found land area (acres): {data['land_area_acres']}")
                 else:
                     data['land_area_hectares'] = float(match.group(1))
+                    logger.info(f"✅ Found land area (hectares): {data['land_area_hectares']}")
                 break
         
         return data
@@ -391,6 +454,7 @@ class OCRDocumentProcessor:
             match = re.search(pattern, text)
             if match:
                 data['account_number'] = match.group(1)
+                logger.info(f"✅ Found account number: {data['account_number']}")
                 break
         
         # IFSC code
@@ -398,6 +462,7 @@ class OCRDocumentProcessor:
         match = re.search(ifsc_pattern, text, re.I)
         if match:
             data['ifsc_code'] = match.group(1).upper()
+            logger.info(f"✅ Found IFSC: {data['ifsc_code']}")
         
         return data
     
@@ -416,6 +481,7 @@ class OCRDocumentProcessor:
                 income_str = match.group(1).replace(',', '')
                 try:
                     data['annual_income'] = float(income_str)
+                    logger.info(f"✅ Found annual income: {data['annual_income']}")
                 except:
                     pass
                 break
@@ -431,6 +497,7 @@ class OCRDocumentProcessor:
         for category in caste_categories:
             if category in text:
                 data['caste_category'] = category
+                logger.info(f"✅ Found caste category: {data['caste_category']}")
                 break
         
         return data
@@ -444,6 +511,7 @@ class OCRDocumentProcessor:
         match = re.search(name_pattern, text)
         if match:
             data['full_name'] = match.group(1).strip()
+            logger.info(f"✅ Found name: {data['full_name']}")
         
         return data
     
@@ -456,6 +524,7 @@ class OCRDocumentProcessor:
         match = re.search(policy_pattern, text, re.I)
         if match:
             data['policy_number'] = match.group(1)
+            logger.info(f"✅ Found policy number: {data['policy_number']}")
         
         return data
     
@@ -468,6 +537,7 @@ class OCRDocumentProcessor:
         match = re.search(name_pattern, text)
         if match:
             data['deceased_name'] = match.group(1).strip()
+            logger.info(f"✅ Found deceased name: {data['deceased_name']}")
         
         return data
     
