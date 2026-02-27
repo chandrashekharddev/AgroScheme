@@ -25,7 +25,7 @@ class Settings:
     ALLOWED_ORIGINS: List[str] = [
         # Your Vercel frontend
         "https://agroscheme-backend-2.vercel.app",
-        
+        "https://agroscheme-app.vercel.app",
         # Your Render backend
         "https://agroscheme-6.onrender.com",
         
